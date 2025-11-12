@@ -171,9 +171,9 @@ async def text_to_speech(request: TTSRequest):
         model=VLLM_MODEL,
         speaker_id=speaker_id,
         device=TTS_DEVICE,
-        hop_only=True,
-        hop_samples=512,
-        prebuffer_seconds=1.2,
+        hop_only=False,  # Disable hop-only for full audio quality
+        hop_samples=2048,  # Use full synthesis region
+        prebuffer_seconds=0.5,
         concurrent_decode=True,
         max_workers=2,
     )
