@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  svara-tts-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: svara-tts-api:latest
+    container_name: svara-tts-api
+    
+    # GPU configuration
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    
+    # Port mappings
+    ports:
+      - "8000:8000"  # vLLM server
+      - "8080:8080"  # FastAPI API server
+    
+    # Environment variables (override in .env file)
+    environment:
+      # vLLM Configuration
+      - VLLM_MODEL=${VLLM_MODEL:-kenpath/svara-tts-v1}
+      - VLLM_PORT=${VLLM_PORT:-8000}
+      - VLLM_HOST=${VLLM_HOST:-0.0.0.0}
+      - VLLM_GPU_MEMORY_UTILIZATION=${VLLM_GPU_MEMORY_UTILIZATION:-0.9}
+      - VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN:-2048}
+      - VLLM_TENSOR_PARALLEL_SIZE=${VLLM_TENSOR_PARALLEL_SIZE:-1}
+      - VLLM_TRUST_REMOTE_CODE=${VLLM_TRUST_REMOTE_CODE:-true}
+      
+      # API Configuration
+      - VLLM_BASE_URL=${VLLM_BASE_URL:-http://localhost:8000/v1}
+      - API_PORT=${API_PORT:-8080}
+      - API_HOST=${API_HOST:-0.0.0.0}
+      - TTS_DEVICE=${TTS_DEVICE:-cuda}
+      
+      # Hugging Face Token (optional, for gated models)
+      - HF_TOKEN=${HF_TOKEN:-}
+    
+    # Volume mounts
+    volumes:
+      # Cache Hugging Face models to avoid re-downloading
+      - huggingface_cache:/root/.cache/huggingface
+      # Optional: Mount local code for development
+      # - ./tts_engine:/app/tts_engine
+      # - ./api:/app/api
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  huggingface_cache:
+    driver: local
+

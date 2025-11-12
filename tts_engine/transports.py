@@ -24,7 +24,7 @@ class VLLMCompletionsTransport:
             "max_tokens": gen_kwargs.get("max_tokens", 2048),
             "temperature": gen_kwargs.get("temperature", 0.75),
             "top_p": gen_kwargs.get("top_p", 0.9),
-            "do_sample": True,
+            "do_sample": gen_kwargs.get("do_sample", True),
             "repetition_penalty": gen_kwargs.get("repetition_penalty", 1.1),
             "stop_token_ids": [128258,128262]
         }
@@ -69,10 +69,10 @@ class VLLMCompletionsTransportAsync:
             "prompt": prompt,
             "stream": True,
             "max_tokens": gen_kwargs.get("max_tokens", 2048),
-            "temperature": gen_kwargs.get("temperature", 0.6),
-            "top_p": gen_kwargs.get("top_p", 0.95),
-            "repetition_penalty": gen_kwargs.get("repetition_penalty", 1.2),
-            "stop_token_ids": [128001,128262]
+            "temperature": gen_kwargs.get("temperature", 0.75),
+            "top_p": gen_kwargs.get("top_p", 0.9),
+            "repetition_penalty": gen_kwargs.get("repetition_penalty", 1.1),
+            "stop_token_ids": [128258,128262]
         }
 
         async with aiohttp.ClientSession() as sess:

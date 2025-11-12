@@ -3,19 +3,30 @@ from __future__ import annotations
 from typing import List, Literal
 from langcodes import Language
 
-def svara_prompt(text: str, lang_code: str, gender: Literal["male", "female"]) -> str:
+def svara_prompt(text: str, speaker_id: str) -> str:
     """Format the prompt for the Svara-TTS model.
     
     Args:
         text: The text to synthesize.
-        lang_code: The language code.
-        gender: The gender of the voice.
+        speaker_id: The speaker identifier in "Language (Gender)" format (e.g., "Hindi (Male)").
     """
-    language = Language.get(lang_code).display_name()    
-    gender   = gender.capitalize()
-    voice   = f"{language} ({gender})"        
-    base = f"<|audio|> {voice}: {text}<|eot_id|>"
+    base = f"<|audio|> {speaker_id}: {text}<|eot_id|>"
     return "<custom_token_3>" + base + "<custom_token_4><custom_token_5>"
+
+
+def create_speaker_id(lang_code: str, gender: Literal["male", "female"]) -> str:
+    """
+    Create a speaker ID from language code and gender.
+    
+    Args:
+        lang_code: An ISO 639-1 language code.
+        gender: The gender of the voice.
+    
+    Returns:
+        Speaker ID in "Language (Gender)" format (e.g., "Hindi (Male)").
+    """
+    language = Language.get(lang_code).display_name()
+    return f"{language} ({gender.capitalize()})"
 
 _DEFAULT_SEPARATORS = [
     "\n\n",   # paragraphs
@@ -126,8 +137,8 @@ def _hard_split(text: str, max_len: int, overlap: int) -> List[str]:
 
 def chunk_text(
     text: str,
-    max_len: int = 280,
-    overlap: int = 24,
+    max_len: int = 128,
+    overlap: int = 0,
     separators: List[str] | None = None,
 ) -> List[str]:
     """

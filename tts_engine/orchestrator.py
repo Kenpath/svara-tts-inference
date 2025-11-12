@@ -6,7 +6,7 @@ import asyncio
 from .transports import VLLMCompletionsTransport, VLLMCompletionsTransportAsync
 from .mapper import SvaraMapper, extract_custom_token_numbers
 from .decoder_snac import SNACDecoder
-from .utils import svara_prompt, chunk_text
+from .utils import svara_prompt, chunk_text, create_speaker_id
 from .buffers import AudioBuffer, SyncFuture
 
 class SvaraTTSOrchestrator:
@@ -17,55 +17,75 @@ class SvaraTTSOrchestrator:
     Args:
         base_url: The base URL of the VLLM server.
         model: The model name.
-        voice: The voice name.
-        lang: The language code.
+        speaker_id: The speaker identifier (e.g., "Hindi (Male)", "English (Female)").
+                    If not provided, will be constructed from lang_code and gender.
+        lang_code: An ISO 639-1 language code (used if speaker_id not provided).
+        gender: The gender of the voice (used if speaker_id not provided).
         headers: The headers for the VLLM server.
         hop_only: If True, return only the last hop_samples for streaming.
         hop_samples: The number of samples to keep when hop_only=True.
         prebuffer_seconds: The number of seconds to prebuffer.
         concurrent_decode: If True, decode concurrently.
         max_workers: The number of workers to use for decoding.
+        device: Device for SNAC decoder (cuda, mps, cpu, or None for auto).
     """
     def __init__(self,
                  base_url: str,
-                 model: str,
-                 lang_code: str,
-                 gender: Literal["male", "female"],
+                 model: str = "kenpath/svara-tts-v1",
+                 speaker_id: Optional[str] = None,
+                 lang_code: str = "en",
+                 gender: Literal["male", "female"] = "male",
                  headers: Optional[dict] = None,
                  hop_only: bool = False,
-                 hop_samples: int = 2048,
+                 hop_samples: int = 512,
                  prebuffer_seconds: float = 1.2,
                  concurrent_decode: bool = True,
-                 max_workers: int = 2):
-        self.lang_code = lang_code
-        self.gender = gender
-        self.transport    = VLLMCompletionsTransport(base_url, model, headers)
+                 max_workers: int = 2,
+                 device: Optional[str] = None):
+        # If speaker_id is provided, use it; otherwise construct from lang_code and gender
+        if speaker_id is None:
+            self.speaker_id = create_speaker_id(lang_code, gender)
+        else:
+            self.speaker_id = speaker_id
+        
+        self.transport      = VLLMCompletionsTransport(base_url, model, headers)
         self.transport_async = None  # lazy
         self.mapper     = SvaraMapper()
-        self.decoder    = SNACDecoder()
+        self.decoder    = SNACDecoder(device)
         self.hop_only      = hop_only
         self.hop_samples    = hop_samples
         self.prebuffer_samples = int(self.decoder.sample_rate * prebuffer_seconds)
         self.concurrent_decode = concurrent_decode
         self.max_workers    = max_workers
-
+        
     # ------------ SYNC path ------------
-    def stream(self, text: str, *, chunk_long_text: bool = False) -> Iterator[bytes]:
+    def stream(self, 
+               text: str,                
+               chunk_long_text: bool = False, 
+               max_len: int = 128,
+               overlap: int = 0,
+               emotion_tag: Optional[str] = None,
+               **gen_kwargs) -> Iterator[bytes]:
         """Stream the TTS output.
         
         Args:
             text: The text to synthesize.
             chunk_long_text: If True, chunk the text into smaller chunks.
+            gen_kwargs: Additional keyword arguments to pass to the transport.
         """
         if chunk_long_text:
             # Sequentially synthesize chunks.
-            for t in chunk_text(text, max_len=280, overlap=24):
-                yield from self._stream_one(t)
+            for t in chunk_text(text, max_len=max_len, overlap=overlap):
+                if emotion_tag:
+                    t = f"{t} {emotion_tag}"
+                yield from self._stream_one(t, **gen_kwargs)
         else:
-            yield from self._stream_one(text)
+            if emotion_tag:
+                text = f"{text} {emotion_tag}"
+            yield from self._stream_one(text, **gen_kwargs)
 
-    def _stream_one(self, text: str) -> Iterator[bytes]:
-        prompt = svara_prompt(text, self.lang_code, self.gender)
+    def _stream_one(self, text: str, **gen_kwargs) -> Iterator[bytes]:
+        prompt = svara_prompt(text, self.speaker_id)
         audio_buf = AudioBuffer(self.prebuffer_samples)
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) if self.concurrent_decode else None
         pending: List[concurrent.futures.Future] = []
@@ -77,7 +97,7 @@ class SvaraTTSOrchestrator:
             return executor.submit(decode, win) if executor else SyncFuture(decode(win))
 
         try:
-            for token_text in self.transport.stream(prompt):
+            for token_text in self.transport.stream(prompt, **gen_kwargs):
                 for n in extract_custom_token_numbers(token_text):
                     win = self.mapper.feed_raw(n)
                     if win is not None:
@@ -99,7 +119,13 @@ class SvaraTTSOrchestrator:
                 executor.shutdown(wait=True)
 
     # ------------ ASYNC path ------------
-    async def astream(self, text: str, *, chunk_long_text: bool = False) -> AsyncIterator[bytes]:
+    async def astream(self, 
+                     text: str, 
+                     *, 
+                     chunk_long_text: bool = False, 
+                     max_len: int = 128,
+                     overlap: int = 0,
+                     **gen_kwargs) -> AsyncIterator[bytes]:
         if self.transport_async is None:
             base_url = self.transport.url[:-12]  # remove '/completions'
             self.transport_async = VLLMCompletionsTransportAsync(
@@ -107,15 +133,15 @@ class SvaraTTSOrchestrator:
             )
         
         if chunk_long_text:
-            for t in chunk_text(text, max_len=280, overlap=24):
-                async for b in self._astream_one(t):
+            for t in chunk_text(text, max_len=max_len, overlap=overlap):
+                async for b in self._astream_one(t, **gen_kwargs):
                     yield b
         else:
-            async for b in self._astream_one(text):
+            async for b in self._astream_one(text, **gen_kwargs):
                 yield b
 
-    async def _astream_one(self, text: str) -> AsyncIterator[bytes]:
-        prompt = svara_prompt(text, self.lang_code, self.gender)
+    async def _astream_one(self, text: str, **gen_kwargs) -> AsyncIterator[bytes]:
+        prompt    = svara_prompt(text, self.speaker_id)
         audio_buf = AudioBuffer(self.prebuffer_samples)
         loop = asyncio.get_running_loop()
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) if self.concurrent_decode else None
@@ -131,7 +157,7 @@ class SvaraTTSOrchestrator:
                 return decode(win)
 
         try:
-            async for token_text in self.transport_async.astream(prompt):
+            async for token_text in self.transport_async.astream(prompt, **gen_kwargs):
                 for n in extract_custom_token_numbers(token_text):
                     win = self.mapper.feed_raw(n)
                     if win is not None:
