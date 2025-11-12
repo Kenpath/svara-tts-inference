@@ -7,3 +7,4 @@ uvicorn[standard]>=0.24.0
 pydantic>=2.0.0
 aiohttp>=3.9.0
 requests
+hf-transfer  # Optional: faster HuggingFace downloads

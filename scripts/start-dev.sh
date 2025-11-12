@@ -36,13 +36,24 @@ wait_for_vllm() {
     local attempt=0
     
     while [ $attempt -lt $max_attempts ]; do
-        if curl -s http://localhost:${VLLM_PORT}/health > /dev/null 2>&1; then
+        # Try both health endpoints
+        if curl -s http://localhost:${VLLM_PORT}/health > /dev/null 2>&1 || \
+           curl -s http://localhost:${VLLM_PORT}/v1/models > /dev/null 2>&1; then
             echo "✓ vLLM server is ready!"
             return 0
         fi
         
         attempt=$((attempt + 1))
         echo "  Attempt $attempt/$max_attempts..."
+        
+        # Show last 10 lines of log every 10 attempts
+        if [ $((attempt % 10)) -eq 0 ]; then
+            echo ""
+            echo "  Last 10 lines of vLLM log:"
+            tail -n 10 /tmp/vllm.log | sed 's/^/    /'
+            echo ""
+        fi
+        
         sleep 5
     done
     
