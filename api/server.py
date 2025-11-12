@@ -263,13 +263,21 @@ async def get_timing():
     # Convert to more readable format
     formatted_stats = {}
     for func_name, data in stats.items():
-        avg_time = data["total_time"] / data["count"] if data["count"] > 0 else 0
+        # Skip functions that haven't been called yet
+        if data["count"] == 0:
+            continue
+            
+        avg_time = data["total_time"] / data["count"]
+        # Handle inf values (when count is 0)
+        min_time = data["min_time"] if data["min_time"] != float('inf') else 0
+        max_time = data["max_time"] if data["max_time"] != float('-inf') else 0
+        
         formatted_stats[func_name] = {
             "calls": data["count"],
             "total_ms": round(data["total_time"] * 1000, 2),
             "avg_ms": round(avg_time * 1000, 2),
-            "min_ms": round(data["min_time"] * 1000, 2),
-            "max_ms": round(data["max_time"] * 1000, 2),
+            "min_ms": round(min_time * 1000, 2),
+            "max_ms": round(max_time * 1000, 2),
         }
     
     return {
