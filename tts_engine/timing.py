@@ -1,6 +1,7 @@
 import time
 import functools
 import asyncio
+import inspect
 from typing import Optional, Dict, Callable
 import logging
 
@@ -39,7 +40,20 @@ def track_time(name: Optional[str] = None, log_level: str = "INFO"):
                 "max_time": 0.0,
             }
         
-        if asyncio.iscoroutinefunction(func):
+        # Handle async generators (async def with yield)
+        if inspect.isasyncgenfunction(func):
+            @functools.wraps(func)
+            async def async_gen_wrapper(*args, **kwargs):
+                start_time = time.perf_counter()
+                try:
+                    async for item in func(*args, **kwargs):
+                        yield item
+                finally:
+                    elapsed = time.perf_counter() - start_time
+                    _log_timing(func_name, elapsed, log_level)
+            return async_gen_wrapper
+        # Handle regular async functions
+        elif asyncio.iscoroutinefunction(func):
             @functools.wraps(func)
             async def async_wrapper(*args, **kwargs):
                 start_time = time.perf_counter()
@@ -50,6 +64,19 @@ def track_time(name: Optional[str] = None, log_level: str = "INFO"):
                     elapsed = time.perf_counter() - start_time
                     _log_timing(func_name, elapsed, log_level)
             return async_wrapper
+        # Handle sync generators (def with yield)
+        elif inspect.isgeneratorfunction(func):
+            @functools.wraps(func)
+            def sync_gen_wrapper(*args, **kwargs):
+                start_time = time.perf_counter()
+                try:
+                    for item in func(*args, **kwargs):
+                        yield item
+                finally:
+                    elapsed = time.perf_counter() - start_time
+                    _log_timing(func_name, elapsed, log_level)
+            return sync_gen_wrapper
+        # Handle regular sync functions
         else:
             @functools.wraps(func)
             def sync_wrapper(*args, **kwargs):
