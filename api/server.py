@@ -95,9 +95,7 @@ async def lifespan(app: FastAPI):
         model=VLLM_MODEL,
         speaker_id="English (Male)",  # Default, will be overridden per request
         device=TTS_DEVICE,
-        hop_only=True,
-        hop_samples=512,
-        prebuffer_seconds=1.2,
+        prebuffer_seconds=0.5,
         concurrent_decode=True,
         max_workers=2,
     )
