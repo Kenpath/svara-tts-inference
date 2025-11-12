@@ -19,6 +19,7 @@ VLLM_HOST=${VLLM_HOST:-0.0.0.0}
 VLLM_GPU_MEMORY_UTILIZATION=${VLLM_GPU_MEMORY_UTILIZATION:-0.9}
 VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN:-8192}
 VLLM_TENSOR_PARALLEL_SIZE=${VLLM_TENSOR_PARALLEL_SIZE:-1}
+VLLM_QUANTIZATION=${VLLM_QUANTIZATION:-fp8}
 
 API_PORT=${API_PORT:-8080}
 API_HOST=${API_HOST:-0.0.0.0}
@@ -99,6 +100,7 @@ python3 -m vllm.entrypoints.openai.api_server \
     --trust-remote-code \
     --dtype auto \
     --enforce-eager \
+    --quantization "$VLLM_QUANTIZATION" \
     > /tmp/vllm.log 2>&1 &
 
 VLLM_PID=$!
