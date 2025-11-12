@@ -4,6 +4,7 @@ import json
 from typing import Iterator, AsyncIterator, Optional, Dict, Any
 import requests
 import aiohttp
+from .timing import track_time
 class VLLMCompletionsTransport:
     """
     Sync transport for OpenAI-compatible /v1/completions streaming (SSE).
@@ -16,6 +17,7 @@ class VLLMCompletionsTransport:
         if headers:
             self.headers.update(headers)
 
+    @track_time("vLLM.stream")
     def stream(self, prompt: str, **gen_kwargs) -> Iterator[str]:
         payload: Dict[str, Any] = {
             "model": self.model,
@@ -63,6 +65,7 @@ class VLLMCompletionsTransportAsync:
         if headers:
             self.headers.update(headers)
 
+    @track_time("vLLM.astream")
     async def astream(self, prompt: str, **gen_kwargs) -> AsyncIterator[str]:
         payload: Dict[str, Any] = {
             "model": self.model,

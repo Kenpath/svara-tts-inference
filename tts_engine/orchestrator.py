@@ -8,6 +8,7 @@ from .mapper import SvaraMapper, extract_custom_token_numbers
 from .decoder_snac import SNACDecoder
 from .utils import svara_prompt, create_speaker_id
 from .buffers import AudioBuffer, SyncFuture
+from .timing import track_time
 
 class SvaraTTSOrchestrator:
     """
@@ -62,6 +63,7 @@ class SvaraTTSOrchestrator:
         """
         yield from self._stream_one(text, **gen_kwargs)
 
+    @track_time("Orchestrator.stream_one")
     def _stream_one(self, text: str, **gen_kwargs) -> Iterator[bytes]:
         prompt = svara_prompt(text, self.speaker_id)
         audio_buf = AudioBuffer(self.prebuffer_samples)
@@ -107,6 +109,7 @@ class SvaraTTSOrchestrator:
         async for b in self._astream_one(text, **gen_kwargs):
             yield b
 
+    @track_time("Orchestrator.astream_one")
     async def _astream_one(self, text: str, **gen_kwargs) -> AsyncIterator[bytes]:
         prompt    = svara_prompt(text, self.speaker_id)
         audio_buf = AudioBuffer(self.prebuffer_samples)

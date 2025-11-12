@@ -3,6 +3,7 @@ from snac import SNAC
 from typing import List, Optional
 import numpy as np
 import torch
+from .timing import track_time
 
 class SNACDecoder:
     """
@@ -20,6 +21,7 @@ class SNACDecoder:
         self.model       = SNAC.from_pretrained("hubertsiuzdak/snac_24khz").eval().to(self.device)
         self.sample_rate = 24000 # Default sample rate for Svara-TTS
 
+    @track_time("SNAC.decode_window")
     def decode_window(self, window: List[int]) -> bytes:
         """
         Decode a sliding window of Svara-TTS codes into PCM16 bytes.
