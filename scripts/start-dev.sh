@@ -94,9 +94,11 @@ python3 -m vllm.entrypoints.openai.api_server \
     --port "$VLLM_PORT" \
     --gpu-memory-utilization "$VLLM_GPU_MEMORY_UTILIZATION" \
     --max-model-len "$VLLM_MAX_MODEL_LEN" \
+    --max-num-batched-tokens "$VLLM_MAX_MODEL_LEN" \
     --tensor-parallel-size "$VLLM_TENSOR_PARALLEL_SIZE" \
     --trust-remote-code \
     --dtype auto \
+    --enforce-eager \
     > /tmp/vllm.log 2>&1 &
 
 VLLM_PID=$!

@@ -19,9 +19,8 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from tts_engine.voice_config import get_all_voices, get_voice, get_speaker_id
+from tts_engine.voice_config import get_all_voices
 from tts_engine.orchestrator import SvaraTTSOrchestrator
-from tts_engine.utils import create_speaker_id
 
 
 # ============================================================================
@@ -58,9 +57,8 @@ class VoicesResponse(BaseModel):
 class TTSRequest(BaseModel):
     """Request model for text-to-speech endpoint."""
     text: str = Field(..., min_length=1, max_length=5000, description="Text to synthesize")
-    voice_id: str = Field(..., description="Voice identifier (e.g., 'hi_male', 'rohit')")
+    voice: str = Field(..., description="Voice in 'Language (Gender)' format (e.g., 'Hindi (Male)', 'English (Female)')")
     model_id: str = Field(default="svara-tts-v1", description="Model to use for synthesis")
-    language_code: Optional[str] = Field(None, description="Override language code (optional)")
     voice_settings: Dict[str, Any] = Field(default_factory=dict, description="Voice settings (not implemented yet)")
     text_normalization: bool = Field(default=False, description="Enable text normalization (not implemented yet)")
     reference_audio: Optional[bytes] = Field(None, description="Reference audio for cloning (not implemented yet)")
@@ -152,25 +150,13 @@ async def text_to_speech(request: TTSRequest):
     Convert text to speech with streaming or non-streaming response.
     
     Args:
-        request: TTS request with text, voice_id, and options
+        request: TTS request with text, voice, and options
     
     Returns:
         Raw PCM16 audio bytes (streaming or complete)
     """
-    # Validate voice exists
-    voice = get_voice(request.voice_id)
-    if voice is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Voice '{request.voice_id}' not found"
-        )
-    
-    # Check model compatibility
-    if voice.model_id != request.model_id:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Voice '{request.voice_id}' belongs to model '{voice.model_id}', not '{request.model_id}'"
-        )
+    # Use the voice directly as speaker_id
+    speaker_id = request.voice
     
     # Currently only v1 is implemented
     if request.model_id != "svara-tts-v1":
@@ -178,18 +164,6 @@ async def text_to_speech(request: TTSRequest):
             status_code=501,
             detail=f"Model '{request.model_id}' is not yet implemented. Currently only 'svara-tts-v1' is supported."
         )
-    
-    # Get speaker ID for this voice
-    try:
-        speaker_id = get_speaker_id(request.voice_id)
-        
-        # Allow language_code override if provided (for v1 voices)
-        # This reconstructs the speaker_id with the overridden language
-        if request.language_code and voice.gender:
-            speaker_id = create_speaker_id(request.language_code, voice.gender)
-            
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
     
     # Create orchestrator instance for this request
     request_orchestrator = SvaraTTSOrchestrator(
