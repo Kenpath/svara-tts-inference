@@ -20,18 +20,12 @@ class SNACDecoder:
         self.model       = SNAC.from_pretrained("hubertsiuzdak/snac_24khz").eval().to(self.device)
         self.sample_rate = 24000 # Default sample rate for Svara-TTS
 
-    def decode_window(
-        self,
-        window: List[int],hop_only: bool = True,
-        hop_samples: int = 512,
-    ) -> bytes:
+    def decode_window(self, window: List[int]) -> bytes:
         """
         Decode a sliding window of Svara-TTS codes into PCM16 bytes.
 
         Args:
             window: flat list of int codes, length multiple of 7 (>= 28 recommended).
-            hop_only: if True, return only the last hop_samples for streaming.
-            hop_samples: number of samples to keep when hop_only=True.
 
         Returns:
             PCM16 mono bytes; empty bytes if invalid input.
@@ -64,10 +58,6 @@ class SNACDecoder:
             audio = self.model.decode([codes_0, codes_1, codes_2])  # [1, 1, T]
             # Keep the synthesis region (matches SNAC examples)
             audio = audio[:, :, 2048:4096]
-
-        if hop_only:
-            # For streaming, keep only the newest hop to avoid buffer “rush”
-            audio = audio[:, :, -hop_samples:]
 
         x = audio.detach().float().cpu().numpy().reshape(-1)
         pcm16 = (np.clip(x, -1.0, 1.0) * 32767.0).astype(np.int16)

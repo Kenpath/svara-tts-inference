@@ -59,10 +59,19 @@ class TTSRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=5000, description="Text to synthesize")
     voice: str = Field(..., description="Voice in 'Language (Gender)' format (e.g., 'Hindi (Male)', 'English (Female)')")
     model_id: str = Field(default="svara-tts-v1", description="Model to use for synthesis")
+    stream: bool = Field(default=True, description="Stream audio response")
+    
+    # Generation parameters (optional)
+    temperature: Optional[float] = Field(None, ge=0.0, le=2.0, description="Sampling temperature (default: 0.75)")
+    top_p: Optional[float] = Field(None, ge=0.0, le=1.0, description="Nucleus sampling probability (default: 0.9)")
+    top_k: Optional[int] = Field(None, ge=-1, description="Top-k sampling (default: -1, disabled)")
+    repetition_penalty: Optional[float] = Field(None, ge=1.0, le=2.0, description="Repetition penalty (default: 1.1)")
+    max_tokens: Optional[int] = Field(None, ge=1, le=4096, description="Maximum tokens to generate (default: 2048)")
+    
+    # Future features (not implemented yet)
     voice_settings: Dict[str, Any] = Field(default_factory=dict, description="Voice settings (not implemented yet)")
     text_normalization: bool = Field(default=False, description="Enable text normalization (not implemented yet)")
     reference_audio: Optional[bytes] = Field(None, description="Reference audio for cloning (not implemented yet)")
-    stream: bool = Field(default=True, description="Stream audio response")
 
 
 # ============================================================================
@@ -171,12 +180,23 @@ async def text_to_speech(request: TTSRequest):
         model=VLLM_MODEL,
         speaker_id=speaker_id,
         device=TTS_DEVICE,
-        hop_only=False,  # Disable hop-only for full audio quality
-        hop_samples=2048,  # Use full synthesis region
         prebuffer_seconds=0.5,
         concurrent_decode=True,
         max_workers=2,
     )
+    
+    # Build generation kwargs from request parameters
+    gen_kwargs = {}
+    if request.temperature is not None:
+        gen_kwargs["temperature"] = request.temperature
+    if request.top_p is not None:
+        gen_kwargs["top_p"] = request.top_p
+    if request.top_k is not None:
+        gen_kwargs["top_k"] = request.top_k
+    if request.repetition_penalty is not None:
+        gen_kwargs["repetition_penalty"] = request.repetition_penalty
+    if request.max_tokens is not None:
+        gen_kwargs["max_tokens"] = request.max_tokens
     
     # Handle streaming vs non-streaming
     if request.stream:
@@ -184,7 +204,7 @@ async def text_to_speech(request: TTSRequest):
         async def audio_stream():
             """Stream audio chunks as they're generated."""
             try:
-                async for chunk in request_orchestrator.astream(request.text):
+                async for chunk in request_orchestrator.astream(request.text, **gen_kwargs):
                     yield chunk
             except Exception as e:
                 print(f"Error during streaming: {e}")
@@ -204,7 +224,7 @@ async def text_to_speech(request: TTSRequest):
         # Non-streaming: collect all audio chunks
         try:
             audio_chunks = []
-            async for chunk in request_orchestrator.astream(request.text):
+            async for chunk in request_orchestrator.astream(request.text, **gen_kwargs):
                 audio_chunks.append(chunk)
             
             complete_audio = b"".join(audio_chunks)
