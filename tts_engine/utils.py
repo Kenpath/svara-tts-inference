@@ -87,7 +87,7 @@ def svara_zero_shot_prompt(
         previous_text_prompt = ""
    
     previous_prompt = previous_text_prompt + previous_audio_prompt
-    current_text_prompt = f"{START_OF_HUMAN}{AUDIO} {text}{EOT_ID}{END_OF_HUMAN}{START_OF_AI}{END_OF_AI}{END_OF_TEXT}"
+    current_text_prompt = f"{START_OF_HUMAN}{AUDIO} {text}{EOT_ID}{END_OF_HUMAN}{START_OF_AI}"
     prompt = previous_prompt + current_text_prompt
     print(prompt)
     return prompt
