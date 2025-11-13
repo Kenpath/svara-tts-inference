@@ -88,11 +88,11 @@ def svara_zero_shot_prompt(
     print(f"Previous audio prompt: {previous_audio_prompt}")
     print(f"Current text prompt: {current_text_prompt}")
     
-    zero_shot_prompt = ''.join[
+    zero_shot_prompt = ''.join([
         previous_text_prompt, 
         previous_audio_prompt, 
         current_text_prompt
-        ]
+        ])
 
     return zero_shot_prompt
 
