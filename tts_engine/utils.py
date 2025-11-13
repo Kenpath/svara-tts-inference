@@ -32,46 +32,98 @@ def create_speaker_id(lang_code: str, gender: Literal["male", "female"]) -> str:
     return f"{language} ({gender.capitalize()})"
 
 
-def svara_zero_shot_prompt(text: str, audio_tokens: List[int], transcript: Optional[str] = None) -> str:
+def svara_zero_shot_prompt(
+    text: str, 
+    audio_tokens: List[int], 
+    transcript: Optional[str] = None,
+    tokenizer=None
+) -> str:
     """
     Format the zero-shot voice cloning prompt for the Svara-TTS model.
     
-    Creates a prompt that includes reference audio tokens (and optionally a transcript)
-    followed by the target text to synthesize in the cloned voice.
-    
-    IMPORTANT: Zero-shot does NOT use the standard TTS wrapper tokens!
+    CRITICAL: This function MUST use the tokenizer to encode text/transcript,
+    then concatenate as token IDs (like the notebook), not as strings!
     
     Args:
         text: The target text to synthesize.
         audio_tokens: SNAC token sequence from the reference audio (with offsets).
         transcript: Optional transcript of the reference audio. Including this
                    improves voice cloning quality.
+        tokenizer: The model's tokenizer (required). If None, falls back to string
+                  concatenation (not recommended).
     
     Returns:
         Formatted prompt string ready for the model.
         
     Example:
+        >>> from transformers import AutoTokenizer
+        >>> tokenizer = AutoTokenizer.from_pretrained("kenpath/svara-tts-v1")
         >>> audio_tokens = [128266, 130362, ...]  # From codec.encode_audio()
-        >>> prompt = svara_zero_shot_prompt("Hello world", audio_tokens, "Reference text")
-        >>> # Prompt is now ready to pass to the model
+        >>> prompt = svara_zero_shot_prompt("Hello world", audio_tokens, "Reference text", tokenizer)
     """
-    # Convert audio tokens to their custom token string representation
-    # Audio tokens are already offset (128266+), so we convert them directly
-    audio_token_str = "".join([f"<custom_token_{token}>" for token in audio_tokens])
     
-    # Special tokens for prompt structure (matching notebook format exactly)
-    start_token = "<custom_token_128259>"     # Start marker
-    end_tokens = "<custom_token_128009><custom_token_128260><custom_token_128261><custom_token_128257>"  # End markers
-    final_tokens = "<custom_token_128258><custom_token_128262>"  # Separator
+    # Special token IDs (as integers, not strings)
+    start_tokens = torch.tensor([[128259]], dtype=torch.int64)
+    end_tokens = torch.tensor([[128009, 128260, 128261, 128257]], dtype=torch.int64)
+    final_tokens = torch.tensor([[128258, 128262]], dtype=torch.int64)
+    
+    if tokenizer is None:
+        # Fallback to string concatenation (old behavior, not recommended)
+        # NOTE: This fallback is deprecated and may not work correctly!
+        # Always provide a tokenizer for proper zero-shot prompts.
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning("No tokenizer provided to svara_zero_shot_prompt - using string concatenation fallback")
+        
+        # Correct token ID -> content mapping (from tokenizer config):
+        # 128259 -> <custom_token_3>, 128009 -> <|eot_id|>, 128260 -> <custom_token_4>,
+        # 128261 -> <custom_token_5>, 128257 -> <custom_token_1>, 128258 -> <custom_token_2>,
+        # 128262 -> <custom_token_6>, 128266+ -> audio tokens
+        audio_token_str = "".join([f"<custom_token_{token}>" for token in audio_tokens])
+        start_token = "<custom_token_3>"  # Token ID 128259
+        end_tokens_str = "<|eot_id|><custom_token_4><custom_token_5><custom_token_1>"  # 128009, 128260, 128261, 128257
+        final_tokens_str = "<custom_token_2><custom_token_6>"  # 128258, 128262
+        
+        if transcript and transcript.strip():
+            return f"{start_token} {transcript} {end_tokens_str}{audio_token_str}{final_tokens_str}{start_token} {text} {end_tokens_str}"
+        else:
+            return f"{audio_token_str}{final_tokens_str}{start_token} {text} {end_tokens_str}"
+    
+    # Proper implementation using tokenizer (matches notebook)
+    audio_tokens_tensor = torch.tensor([audio_tokens], dtype=torch.int64)
     
     if transcript and transcript.strip():
-        # WITH TRANSCRIPT: <start> transcript <end> audio_tokens <final> <start> text <end>
-        # Note: NO standard TTS wrapper for zero-shot!
-        prompt = f"{start_token} {transcript} {end_tokens}{audio_token_str}{final_tokens}{start_token} {text} {end_tokens}"
+        # WITH TRANSCRIPT: <start> transcript_tokens <end> audio_tokens <final> <start> text_tokens <end>
+        transcript_tokens = tokenizer(transcript, return_tensors="pt")
+        transcript_input_ids = transcript_tokens['input_ids']
+        
+        zeroprompt_input_ids = torch.cat(
+            [
+                start_tokens,
+                transcript_input_ids,
+                end_tokens,
+                audio_tokens_tensor,
+                final_tokens
+            ],
+            dim=1
+        )
     else:
-        # WITHOUT TRANSCRIPT: audio_tokens <final> <start> text <end>
-        # Note: NO standard TTS wrapper for zero-shot!
-        prompt = f"{audio_token_str}{final_tokens}{start_token} {text} {end_tokens}"
+        # WITHOUT TRANSCRIPT: audio_tokens <final>
+        zeroprompt_input_ids = torch.cat(
+            [
+                audio_tokens_tensor,
+                final_tokens
+            ],
+            dim=1
+        )
+    
+    # Add target text: <start> text_tokens <end>
+    target_tokens = tokenizer(text, return_tensors="pt").input_ids
+    full_input_ids = torch.cat([zeroprompt_input_ids, start_tokens, target_tokens, end_tokens], dim=1)
+    
+    # Decode back to string
+    flat = full_input_ids.flatten().tolist()
+    prompt = tokenizer.decode(flat)
     
     return prompt
 

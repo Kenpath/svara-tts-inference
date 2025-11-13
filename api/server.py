@@ -38,8 +38,9 @@ VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
 VLLM_MODEL = os.getenv("VLLM_MODEL", "kenpath/svara-tts-v1")
 TTS_DEVICE = os.getenv("TTS_DEVICE", None)  # None = auto-detect (CUDA/MPS/CPU)
 
-# Global orchestrator instance (initialized in lifespan)
+# Global instances (initialized in lifespan)
 orchestrator: Optional[SvaraTTSOrchestrator] = None
+tokenizer = None  # Model tokenizer for zero-shot prompt construction
 
 
 # ============================================================================
@@ -49,7 +50,7 @@ orchestrator: Optional[SvaraTTSOrchestrator] = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize and cleanup resources."""
-    global orchestrator
+    global orchestrator, tokenizer
     
     print(f"🚀 Initializing Svara TTS API...")
     print(f"   vLLM URL: {VLLM_BASE_URL}")
@@ -68,7 +69,12 @@ async def lifespan(app: FastAPI):
         max_workers=2,
     )
     
+    # Initialize tokenizer for zero-shot prompt construction
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained(VLLM_MODEL)
+    
     print(f"✓ Orchestrator initialized")
+    print(f"✓ Tokenizer loaded")
     print(f"✓ Loaded {len(get_all_voices())} voices")
     
     yield
@@ -218,11 +224,12 @@ async def text_to_speech(
             logger.info(f"First 10 tokens: {audio_tokens[:10]}")
             logger.info(f"Last 10 tokens: {audio_tokens[-10:]}")
             
-            # Build zero-shot prompt
+            # Build zero-shot prompt (using tokenizer like the notebook)
             prompt = svara_zero_shot_prompt(
                 text=request_text,
                 audio_tokens=audio_tokens,
-                transcript=request_reference_transcript
+                transcript=request_reference_transcript,
+                tokenizer=tokenizer
             )
             logger.info(f"Prompt built (length: {len(prompt)} chars)")
             logger.info(f"Prompt preview (first 500 chars): {prompt[:500]}")
