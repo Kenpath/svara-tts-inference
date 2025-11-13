@@ -211,7 +211,8 @@ async def text_to_speech(
         # Encode audio to SNAC tokens
         logger.info(f"Encoding audio to SNAC tokens")
         codec = SNACCodec(device=TTS_DEVICE)
-        audio_tokens = codec.encode_audio(audio_tensor, input_sample_rate=sample_rate, add_token_offsets=True)
+        
+        audio_tokens = codec.encode_audio(audio_tensor, input_sample_rate=sample_rate, add_token_offsets=False)
         logger.info(f"Audio tokens encoded to {len(audio_tokens)} tokens")
         logger.info(f"First 10 tokens: {audio_tokens[:10]}")
         logger.info(f"Last 10 tokens: {audio_tokens[-10:]}")
