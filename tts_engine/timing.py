@@ -94,6 +94,15 @@ def track_time(name: Optional[str] = None, log_level: str = "INFO"):
 
 def _log_timing(func_name: str, elapsed: float, log_level: str):
     """Update stats and log timing."""
+    # Initialize stats if not present (defensive programming)
+    if func_name not in _timing_stats:
+        _timing_stats[func_name] = {
+            "count": 0,
+            "total_time": 0.0,
+            "min_time": float('inf'),
+            "max_time": 0.0,
+        }
+    
     stats = _timing_stats[func_name]
     stats["count"] += 1
     stats["total_time"] += elapsed
