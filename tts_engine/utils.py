@@ -1,7 +1,10 @@
 
 from __future__ import annotations
-from typing import List, Literal
+from typing import List, Literal, Optional, Tuple
 from langcodes import Language
+import torch
+import torchaudio
+from io import BytesIO
 
 def svara_prompt(text: str, speaker_id: str) -> str:
     """Format the prompt for the Svara-TTS model.
@@ -27,6 +30,48 @@ def create_speaker_id(lang_code: str, gender: Literal["male", "female"]) -> str:
     """
     language = Language.get(lang_code).display_name()
     return f"{language} ({gender.capitalize()})"
+
+
+def svara_zero_shot_prompt(text: str, audio_tokens: List[int], transcript: Optional[str] = None) -> str:
+    """
+    Format the zero-shot voice cloning prompt for the Svara-TTS model.
+    
+    Creates a prompt that includes reference audio tokens (and optionally a transcript)
+    followed by the target text to synthesize in the cloned voice.
+    
+    Args:
+        text: The target text to synthesize.
+        audio_tokens: SNAC token sequence from the reference audio (with offsets).
+        transcript: Optional transcript of the reference audio. Including this
+                   improves voice cloning quality.
+    
+    Returns:
+        Formatted prompt string ready for the model.
+        
+    Example:
+        >>> audio_tokens = [128266, 130362, ...]  # From codec.encode_audio()
+        >>> prompt = svara_zero_shot_prompt("Hello world", audio_tokens, "Reference text")
+        >>> # Prompt is now ready to pass to the model
+    """
+    # Convert audio tokens to their custom token string representation
+    # Audio tokens are already offset (128266+), so we convert them directly
+    audio_token_str = "".join([f"<custom_token_{token}>" for token in audio_tokens])
+    
+    # Special tokens for prompt structure
+    start_token = "<custom_token_128259>"     # Start of segment
+    end_tokens = "<custom_token_128009><custom_token_128260><custom_token_128261><custom_token_128257>"  # End of segment
+    final_tokens = "<custom_token_128258><custom_token_128262>"  # Final separator
+    
+    if transcript and transcript.strip():
+        # WITH TRANSCRIPT: transcript + audio tokens + target text
+        # Format: <128259> transcript <end_tokens> audio_tokens <final_tokens> <128259> target_text <end_tokens>
+        prompt = f"{start_token} {transcript} {end_tokens}{audio_token_str}{final_tokens}{start_token} {text} {end_tokens}"
+    else:
+        # WITHOUT TRANSCRIPT: audio tokens only + target text
+        # Format: audio_tokens <final_tokens> <128259> target_text <end_tokens>
+        prompt = f"{audio_token_str}{final_tokens}{start_token} {text} {end_tokens}"
+    
+    return prompt
 
 _DEFAULT_SEPARATORS = [
     "\n\n",   # paragraphs
@@ -160,3 +205,267 @@ def chunk_text(
     
     chunks = _split_text_recursive(text, max_len, overlap, seps)
     return [c.strip() for c in chunks if c.strip()]
+
+
+# ============================================================================
+# Audio Processing Utilities
+# ============================================================================
+
+def load_audio_from_bytes(
+    audio_bytes: bytes,
+    device: Optional[str] = None,
+) -> Tuple[torch.Tensor, int]:
+    """
+    Load audio from bytes (WAV, MP3, FLAC, OGG, etc.) into a torch tensor.
+    
+    Automatically handles:
+    - Multiple audio formats (via torchaudio backend)
+    - Stereo to mono conversion
+    - Returns float32 tensor normalized to [-1, 1]
+    
+    Args:
+        audio_bytes: Raw audio file bytes (any format supported by torchaudio)
+        device: Device to load tensor on ('cuda', 'mps', 'cpu', or None for auto-detect).
+                Auto-detect tries cuda -> mps -> cpu.
+    
+    Returns:
+        Tuple of (audio_tensor, sample_rate):
+        - audio_tensor: Float32 tensor of shape (samples,) in range [-1, 1]
+        - sample_rate: Sample rate in Hz
+    
+    Raises:
+        RuntimeError: If audio format is invalid or cannot be loaded
+        
+    Example:
+        >>> with open("audio.wav", "rb") as f:
+        ...     audio_bytes = f.read()
+        >>> audio, sr = load_audio_from_bytes(audio_bytes)
+        >>> audio.shape, sr
+        (torch.Size([48000]), 24000)
+    """
+    # Handle device
+    if device is None:
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
+    
+    try:
+        # Load audio from bytes using BytesIO
+        audio_buffer = BytesIO(audio_bytes)
+        waveform, sample_rate = torchaudio.load(audio_buffer)
+        
+        # Convert stereo to mono if needed (average channels)
+        if waveform.shape[0] > 1:
+            waveform = waveform.mean(dim=0, keepdim=False)
+        else:
+            # Squeeze channel dimension for mono
+            waveform = waveform.squeeze(0)
+        
+        # Move to device and ensure float32
+        waveform = waveform.to(device=device, dtype=torch.float32)
+        
+        return waveform, sample_rate
+        
+    except Exception as e:
+        raise RuntimeError(f"Failed to load audio from bytes: {str(e)}") from e
+
+
+def resample_audio(
+    audio: torch.Tensor,
+    original_sr: int,
+    target_sr: int,
+    device: Optional[str] = None,
+) -> torch.Tensor:
+    """
+    Resample audio to a target sample rate using torchaudio.
+    
+    Supports GPU acceleration for faster processing on CUDA/MPS devices.
+    
+    Args:
+        audio: Audio tensor of shape (channels, samples) or (samples,).
+               If 1D, will be converted to (1, samples).
+        original_sr: Original sample rate in Hz.
+        target_sr: Target sample rate in Hz.
+        device: Device to use ('cuda', 'mps', 'cpu', or None for auto-detect).
+                Auto-detect tries cuda -> mps -> cpu.
+    
+    Returns:
+        Resampled audio tensor with shape matching input (channels, samples).
+    
+    Example:
+        >>> audio = torch.randn(1, 48000)  # 1 second at 48kHz
+        >>> resampled = resample_audio(audio, 48000, 24000)
+        >>> resampled.shape
+        torch.Size([1, 24000])
+    """
+    # Handle device
+    if device is None:
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
+    
+    # Ensure 2D tensor (channels, samples)
+    if audio.dim() == 1:
+        audio = audio.unsqueeze(0)
+        squeeze_output = True
+    else:
+        squeeze_output = False
+    
+    # Move to device
+    audio = audio.to(device)
+    
+    # No resampling needed if sample rates match
+    if original_sr == target_sr:
+        return audio.squeeze(0) if squeeze_output else audio
+    
+    # Create resampler and apply
+    resampler = torchaudio.transforms.Resample(
+        orig_freq=original_sr,
+        new_freq=target_sr,
+    ).to(device)
+    
+    resampled = resampler(audio)
+    
+    # Return with original shape
+    return resampled.squeeze(0) if squeeze_output else resampled
+
+
+def change_audio_speed(
+    audio: torch.Tensor,
+    speed_factor: float,
+    sample_rate: int,
+    device: Optional[str] = None,
+) -> torch.Tensor:
+    """
+    Change audio playback speed without altering pitch.
+    
+    Uses resampling to adjust speed. Values > 1.0 speed up, < 1.0 slow down.
+    This implementation changes both speed and pitch together (like tape speed).
+    
+    Args:
+        audio: Audio tensor of shape (channels, samples) or (samples,).
+               If 1D, will be converted to (1, samples).
+        speed_factor: Speed multiplier. 1.0 = original speed, 1.5 = 1.5x faster,
+                     0.75 = slower (0.75x speed).
+        sample_rate: Sample rate of the input audio in Hz.
+        device: Device to use ('cuda', 'mps', 'cpu', or None for auto-detect).
+                Auto-detect tries cuda -> mps -> cpu.
+    
+    Returns:
+        Speed-adjusted audio tensor with shape matching input (channels, samples).
+        The returned audio will have fewer samples if sped up, more if slowed down.
+    
+    Example:
+        >>> audio = torch.randn(1, 24000)  # 1 second at 24kHz
+        >>> faster = change_audio_speed(audio, 1.5, 24000)
+        >>> faster.shape  # ~0.67 seconds of audio
+        torch.Size([1, 16000])
+    """
+    # Handle device
+    if device is None:
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
+    
+    # Ensure 2D tensor (channels, samples)
+    if audio.dim() == 1:
+        audio = audio.unsqueeze(0)
+        squeeze_output = True
+    else:
+        squeeze_output = False
+    
+    # Move to device
+    audio = audio.to(device)
+    
+    # No speed change needed
+    if speed_factor == 1.0:
+        return audio.squeeze(0) if squeeze_output else audio
+    
+    # Calculate the target sample rate
+    # Speed up: increase sample rate (fewer samples for same duration)
+    # Slow down: decrease sample rate (more samples for same duration)
+    target_sr = int(sample_rate * speed_factor)
+    
+    # Use functional API for one-time resampling
+    adjusted = torchaudio.functional.resample(
+        audio,
+        orig_freq=sample_rate,
+        new_freq=target_sr,
+    )
+    
+    # Return with original shape
+    return adjusted.squeeze(0) if squeeze_output else adjusted
+
+
+def normalize_audio_volume(
+    audio: torch.Tensor,
+    target_peak: float = 0.95,
+    device: Optional[str] = None,
+) -> torch.Tensor:
+    """
+    Normalize audio volume to a target peak amplitude.
+    
+    Scales the audio so its maximum absolute value reaches the target peak.
+    This prevents clipping while maximizing volume. Default target of 0.95
+    leaves some headroom to avoid clipping.
+    
+    Args:
+        audio: Audio tensor of shape (channels, samples) or (samples,).
+               If 1D, will be converted to (1, samples).
+        target_peak: Target peak amplitude (0.0 to 1.0). Default 0.95 to
+                    leave headroom and avoid clipping. Use 1.0 for maximum
+                    volume (risk of clipping).
+        device: Device to use ('cuda', 'mps', 'cpu', or None for auto-detect).
+                Auto-detect tries cuda -> mps -> cpu.
+    
+    Returns:
+        Normalized audio tensor with shape matching input (channels, samples).
+        Peak amplitude will be scaled to target_peak.
+    
+    Example:
+        >>> audio = torch.randn(1, 24000) * 0.3  # Quiet audio
+        >>> normalized = normalize_audio_volume(audio, target_peak=0.95)
+        >>> normalized.abs().max()  # Should be close to 0.95
+        tensor(0.9500)
+    """
+    # Handle device
+    if device is None:
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
+    
+    # Ensure 2D tensor (channels, samples)
+    if audio.dim() == 1:
+        audio = audio.unsqueeze(0)
+        squeeze_output = True
+    else:
+        squeeze_output = False
+    
+    # Move to device
+    audio = audio.to(device)
+    
+    # Find the current peak amplitude
+    current_peak = audio.abs().max()
+    
+    # Avoid division by zero
+    if current_peak == 0:
+        return audio.squeeze(0) if squeeze_output else audio
+    
+    # Calculate scaling factor and normalize
+    scale = target_peak / current_peak
+    normalized = audio * scale
+    
+    # Return with original shape
+    return normalized.squeeze(0) if squeeze_output else normalized

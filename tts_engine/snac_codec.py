@@ -1,0 +1,201 @@
+# tts_engine/snac_codec.py
+from snac import SNAC
+from typing import List, Optional
+import numpy as np
+import torch
+from .timing import track_time
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Global model cache to avoid reloading SNAC model for each instance
+_SNAC_MODEL_CACHE: dict[str, SNAC] = {}
+
+
+def _get_or_load_snac_model(device: str, model_name: str = "hubertsiuzdak/snac_24khz") -> SNAC:
+    """
+    Get cached SNAC model or load it if not cached.
+    
+    This prevents repeated model loading when creating multiple codec instances.
+    Models are cached per device to handle multi-GPU scenarios.
+    
+    Args:
+        device: Device to load model on ('cuda', 'mps', 'cpu')
+        model_name: HuggingFace model identifier
+    
+    Returns:
+        Cached or newly loaded SNAC model
+    """
+    cache_key = f"{model_name}_{device}"
+    
+    if cache_key not in _SNAC_MODEL_CACHE:
+        model = SNAC.from_pretrained(model_name).eval().to(device)
+        _SNAC_MODEL_CACHE[cache_key] = model
+    
+    return _SNAC_MODEL_CACHE[cache_key]
+
+
+class SNACCodec:
+    """
+    Unified SNAC codec for encoding audio to tokens and decoding tokens to audio.
+    
+    Supports both:
+    - Encoding: audio waveform → SNAC tokens (for zero-shot voice cloning)
+    - Decoding: SNAC tokens → PCM16 audio (for TTS synthesis)
+    
+    Uses a global model cache to avoid reloading the SNAC model when creating
+    multiple instances, which significantly improves initialization time.
+    """
+    
+    def __init__(self, device: Optional[str] = None, model_name: str = "hubertsiuzdak/snac_24khz"):
+        """
+        Initialize SNAC codec.
+        
+        Args:
+            device: Device to use ('cuda', 'mps', 'cpu', or None for auto-detect)
+            model_name: HuggingFace model identifier for SNAC
+        """
+        if device is None:
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                device = "cpu"
+        
+        self.device = device
+        self.model_name = model_name
+        self.sample_rate = 24000  # SNAC 24kHz model
+        
+        # Get or load model from cache
+        self.model = _get_or_load_snac_model(device, model_name)
+        logger.info(f"SNAC model {model_name} loaded on {device}")
+
+    @track_time("SNAC.encode_audio")
+    def encode_audio(
+        self,
+        audio: torch.Tensor,
+        input_sample_rate: int = 24000,
+        add_token_offsets: bool = True
+    ) -> List[int]:
+        """
+        Encode audio waveform to SNAC tokens for zero-shot voice cloning.
+        
+        This method takes audio and converts it to a sequence of tokens that
+        can be used as a voice reference in the Svara-TTS model.
+        Automatically resamples audio to 24kHz if needed.
+        
+        Args:
+            audio: Audio tensor of shape (channels, samples) or (samples,).
+                   If 1D, will be converted to (1, 1, samples) for SNAC.
+            input_sample_rate: Sample rate of the input audio in Hz. If not 24000,
+                              audio will be automatically resampled to 24kHz.
+            add_token_offsets: If True, adds Svara-TTS token offsets (128266 + vocab offsets)
+                              to make tokens ready for model input. If False, returns raw
+                              SNAC codes in range [0, 4096].
+        
+        Returns:
+            List of token IDs. Length will be 7 * num_frames where num_frames depends
+            on input audio length. Each frame represents ~10ms of audio.
+        
+        Example:
+            >>> codec = SNACCodec()
+            >>> # Load 1 second of audio at 48kHz - will be resampled to 24kHz
+            >>> audio = torch.randn(48000)
+            >>> tokens = codec.encode_audio(audio, input_sample_rate=48000)
+            >>> len(tokens) # ~7 tokens per frame, ~100 frames per second
+            700
+        """
+        # Resample to 24kHz if needed
+        if input_sample_rate != self.sample_rate:
+            from .utils import resample_audio
+            audio = resample_audio(audio, input_sample_rate, self.sample_rate, self.device)
+        
+        # Ensure proper shape: SNAC expects (batch, channels, samples)
+        if audio.dim() == 1:
+            # (samples,) -> (1, 1, samples)
+            audio = audio.unsqueeze(0).unsqueeze(0)
+        elif audio.dim() == 2:
+            # (channels, samples) -> (1, channels, samples)
+            audio = audio.unsqueeze(0)
+        
+        # Move to device and ensure float32
+        audio = audio.to(dtype=torch.float32, device=self.device)
+        
+        # Encode with SNAC
+        with torch.inference_mode():
+            codes = self.model.encode(audio)
+        
+        # Interleave codes: [c0], [c1, c4], [c2, c3, c5, c6]
+        # Pattern for each frame: c0, c1, c2, c3, c4, c5, c6
+        all_codes = []
+        num_frames = codes[0].shape[1]
+        
+        for i in range(num_frames):
+            c0 = codes[0][0][i].item()
+            c1 = codes[1][0][2 * i].item()
+            c2 = codes[2][0][4 * i].item()
+            c3 = codes[2][0][(4 * i) + 1].item()
+            c4 = codes[1][0][(2 * i) + 1].item()
+            c5 = codes[2][0][(4 * i) + 2].item()
+            c6 = codes[2][0][(4 * i) + 3].item()
+            
+            if add_token_offsets:
+                # Add Svara-TTS vocabulary offsets
+                all_codes.append(c0 + 128266)
+                all_codes.append(c1 + 128266 + 4096)
+                all_codes.append(c2 + 128266 + (2 * 4096))
+                all_codes.append(c3 + 128266 + (3 * 4096))
+                all_codes.append(c4 + 128266 + (4 * 4096))
+                all_codes.append(c5 + 128266 + (5 * 4096))
+                all_codes.append(c6 + 128266 + (6 * 4096))
+            else:
+                # Raw SNAC codes
+                all_codes.extend([c0, c1, c2, c3, c4, c5, c6])
+        
+        return all_codes
+    
+    @track_time("SNAC.decode_window")
+    def decode_window(self, window: List[int]) -> bytes:
+        """
+        Decode a sliding window of Svara-TTS codes into PCM16 bytes.
+        
+        Args:
+            window: Flat list of int codes, length multiple of 7 (>= 28 recommended).
+                   These should be raw SNAC codes in range [0, 4096], NOT with
+                   token offsets added.
+        
+        Returns:
+            PCM16 mono bytes; empty bytes if invalid input.
+        """
+        if not window or len(window) < 7:
+            return b""
+        
+        # Use only full frames
+        F = len(window) // 7
+        frame = window[: F * 7]
+        
+        # Build code streams: [c0], [c1,c4], [c2,c3,c5,c6]
+        t = torch.tensor(frame, dtype=torch.int32, device=self.device)
+        t = t.view(F, 7)
+        
+        codes_0 = t[:, 0].reshape(1, -1)
+        codes_1 = t[:, [1, 4]].reshape(1, -1)
+        codes_2 = t[:, [2, 3, 5, 6]].reshape(1, -1)
+        
+        # Validate range [0, 4096]
+        if (
+            torch.any((codes_0 < 0) | (codes_0 > 4096)) or
+            torch.any((codes_1 < 0) | (codes_1 > 4096)) or
+            torch.any((codes_2 < 0) | (codes_2 > 4096))
+        ):
+            return b""
+        
+        with torch.inference_mode():
+            audio = self.model.decode([codes_0, codes_1, codes_2])  # [1, 1, T]
+            # Keep the synthesis region (matches SNAC examples)
+            audio = audio[:, :, 2048:4096]
+        
+        x = audio.detach().float().cpu().numpy().reshape(-1)
+        pcm16 = (np.clip(x, -1.0, 1.0) * 32767.0).astype(np.int16)
+        return pcm16.tobytes()

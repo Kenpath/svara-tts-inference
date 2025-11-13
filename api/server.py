@@ -7,12 +7,11 @@ Indian language voices and streaming audio generation.
 from __future__ import annotations
 import os
 import asyncio
-from typing import Optional, Dict, Any
+from typing import Optional
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
 import sys
 from pathlib import Path
 
@@ -22,6 +21,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from tts_engine.voice_config import get_all_voices
 from tts_engine.orchestrator import SvaraTTSOrchestrator
 from tts_engine.timing import get_timing_stats, reset_timing_stats
+from tts_engine.utils import load_audio_from_bytes, svara_zero_shot_prompt
+from tts_engine.snac_codec import SNACCodec
+from api.models import VoiceResponse, VoicesResponse, TTSRequest
 
 
 # ============================================================================
@@ -34,45 +36,6 @@ TTS_DEVICE = os.getenv("TTS_DEVICE", None)  # None = auto-detect (CUDA/MPS/CPU)
 
 # Global orchestrator instance (initialized in lifespan)
 orchestrator: Optional[SvaraTTSOrchestrator] = None
-
-
-# ============================================================================
-# Request/Response Models
-# ============================================================================
-
-class VoiceResponse(BaseModel):
-    """Voice metadata response."""
-    voice_id: str
-    name: str
-    language_code: str
-    model_id: str
-    gender: Optional[str] = None
-    description: Optional[str] = None
-
-
-class VoicesResponse(BaseModel):
-    """Response for GET /v1/voices endpoint."""
-    voices: list[VoiceResponse]
-
-
-class TTSRequest(BaseModel):
-    """Request model for text-to-speech endpoint."""
-    text: str = Field(..., min_length=1, max_length=5000, description="Text to synthesize")
-    voice: str = Field(..., description="Voice in 'Language (Gender)' format (e.g., 'Hindi (Male)', 'English (Female)')")
-    model_id: str = Field(default="svara-tts-v1", description="Model to use for synthesis")
-    stream: bool = Field(default=True, description="Stream audio response")
-    
-    # Generation parameters (optional)
-    temperature: Optional[float] = Field(None, ge=0.0, le=2.0, description="Sampling temperature (default: 0.75)")
-    top_p: Optional[float] = Field(None, ge=0.0, le=1.0, description="Nucleus sampling probability (default: 0.9)")
-    top_k: Optional[int] = Field(None, ge=-1, description="Top-k sampling (default: -1, disabled)")
-    repetition_penalty: Optional[float] = Field(None, ge=1.0, le=2.0, description="Repetition penalty (default: 1.1)")
-    max_tokens: Optional[int] = Field(None, ge=1, le=4096, description="Maximum tokens to generate (default: 2048)")
-    
-    # Future features (not implemented yet)
-    voice_settings: Dict[str, Any] = Field(default_factory=dict, description="Voice settings (not implemented yet)")
-    text_normalization: bool = Field(default=False, description="Enable text normalization (not implemented yet)")
-    reference_audio: Optional[bytes] = Field(None, description="Reference audio for cloning (not implemented yet)")
 
 
 # ============================================================================
@@ -157,14 +120,22 @@ async def text_to_speech(request: TTSRequest):
     """
     Convert text to speech with streaming or non-streaming response.
     
+    Supports two modes:
+    1. Standard TTS: Provide 'voice' parameter
+    2. Zero-shot cloning: Provide 'reference_audio' (and optionally 'reference_transcript')
+    
     Args:
-        request: TTS request with text, voice, and options
+        request: TTS request with text, voice/reference_audio, and options
     
     Returns:
         Raw PCM16 audio bytes (streaming or complete)
     """
-    # Use the voice directly as speaker_id
-    speaker_id = request.voice
+    # Validate that either voice or reference_audio is provided
+    if not request.voice and not request.reference_audio:
+        raise HTTPException(
+            status_code=400,
+            detail="Either 'voice' or 'reference_audio' must be provided"
+        )
     
     # Currently only v1 is implemented
     if request.model_id != "svara-tts-v1":
@@ -172,6 +143,39 @@ async def text_to_speech(request: TTSRequest):
             status_code=501,
             detail=f"Model '{request.model_id}' is not yet implemented. Currently only 'svara-tts-v1' is supported."
         )
+    
+    # Determine mode: zero-shot or standard
+    zero_shot_mode = request.reference_audio is not None
+    prompt = None
+    
+    if zero_shot_mode:
+        # Zero-shot voice cloning mode
+        try:
+            # Load audio from bytes
+            audio_tensor, sample_rate = load_audio_from_bytes(request.reference_audio, device=TTS_DEVICE)
+            
+            # Encode audio to SNAC tokens
+            codec = SNACCodec(device=TTS_DEVICE)
+            audio_tokens = codec.encode_audio(audio_tensor, input_sample_rate=sample_rate, add_token_offsets=True)
+            
+            # Build zero-shot prompt
+            prompt = svara_zero_shot_prompt(
+                text=request.text,
+                audio_tokens=audio_tokens,
+                transcript=request.reference_transcript
+            )
+            
+            # Use dummy speaker_id (won't be used since we have custom prompt)
+            speaker_id = "ZeroShot (Custom)"
+            
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to process reference audio: {str(e)}"
+            )
+    else:
+        # Standard TTS mode
+        speaker_id = request.voice
     
     # Create orchestrator instance for this request
     request_orchestrator = SvaraTTSOrchestrator(
@@ -203,7 +207,7 @@ async def text_to_speech(request: TTSRequest):
         async def audio_stream():
             """Stream audio chunks as they're generated."""
             try:
-                async for chunk in request_orchestrator.astream(request.text, **gen_kwargs):
+                async for chunk in request_orchestrator.astream(request.text, prompt=prompt, **gen_kwargs):
                     yield chunk
             except Exception as e:
                 print(f"Error during streaming: {e}")
@@ -223,7 +227,7 @@ async def text_to_speech(request: TTSRequest):
         # Non-streaming: collect all audio chunks
         try:
             audio_chunks = []
-            async for chunk in request_orchestrator.astream(request.text, **gen_kwargs):
+            async for chunk in request_orchestrator.astream(request.text, prompt=prompt, **gen_kwargs):
                 audio_chunks.append(chunk)
             
             complete_audio = b"".join(audio_chunks)

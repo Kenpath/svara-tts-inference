@@ -5,7 +5,7 @@ import concurrent.futures
 import asyncio
 from .transports import VLLMCompletionsTransport, VLLMCompletionsTransportAsync
 from .mapper import SvaraMapper, extract_custom_token_numbers
-from .decoder_snac import SNACDecoder
+from .snac_codec import SNACCodec
 from .utils import svara_prompt, create_speaker_id
 from .buffers import AudioBuffer, SyncFuture
 from .timing import track_time
@@ -48,30 +48,36 @@ class SvaraTTSOrchestrator:
         self.transport      = VLLMCompletionsTransport(base_url, model, headers)
         self.transport_async = None  # lazy
         self.mapper     = SvaraMapper()
-        self.decoder    = SNACDecoder(device)
-        self.prebuffer_samples = int(self.decoder.sample_rate * prebuffer_seconds)
+        self.codec      = SNACCodec(device)
+        self.prebuffer_samples = int(self.codec.sample_rate * prebuffer_seconds)
         self.concurrent_decode = concurrent_decode
         self.max_workers    = max_workers
         
     # ------------ SYNC path ------------
-    def stream(self, text: str, **gen_kwargs) -> Iterator[bytes]:
+    def stream(self, text: str, prompt: Optional[str] = None, **gen_kwargs) -> Iterator[bytes]:
         """Stream the TTS output.
         
         Args:
             text: The text to synthesize.
+            prompt: Optional pre-computed prompt. If provided, used directly.
+                   If None, builds prompt from text and speaker_id.
             gen_kwargs: Additional keyword arguments to pass to the transport.
         """
-        yield from self._stream_one(text, **gen_kwargs)
+        yield from self._stream_one(text, prompt=prompt, **gen_kwargs)
 
     @track_time("Orchestrator.stream_one")
-    def _stream_one(self, text: str, **gen_kwargs) -> Iterator[bytes]:
-        prompt = svara_prompt(text, self.speaker_id)
+    def _stream_one(self, text: str, prompt: Optional[str] = None, **gen_kwargs) -> Iterator[bytes]:
+        # Use provided prompt or build from text + speaker_id
+        if prompt is None:
+            prompt = svara_prompt(text, self.speaker_id)
+        else:
+            prompt = prompt
         audio_buf = AudioBuffer(self.prebuffer_samples)
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) if self.concurrent_decode else None
         pending: List[concurrent.futures.Future] = []
 
         def decode(win: List[int]) -> bytes:
-            return self.decoder.decode_window(win)
+            return self.codec.decode_window(win)
 
         def submit(win: List[int]):
             return executor.submit(decode, win) if executor else SyncFuture(decode(win))
@@ -99,26 +105,38 @@ class SvaraTTSOrchestrator:
                 executor.shutdown(wait=True)
 
     # ------------ ASYNC path ------------
-    async def astream(self, text: str, **gen_kwargs) -> AsyncIterator[bytes]:
+    async def astream(self, text: str, prompt: Optional[str] = None, **gen_kwargs) -> AsyncIterator[bytes]:
+        """Async stream the TTS output.
+        
+        Args:
+            text: The text to synthesize.
+            prompt: Optional pre-computed prompt. If provided, used directly.
+                   If None, builds prompt from text and speaker_id.
+            gen_kwargs: Additional keyword arguments to pass to the transport.
+        """
         if self.transport_async is None:
             base_url = self.transport.url[:-12]  # remove '/completions'
             self.transport_async = VLLMCompletionsTransportAsync(
                 base_url, self.transport.model, self.transport.headers
             )
         
-        async for b in self._astream_one(text, **gen_kwargs):
+        async for b in self._astream_one(text, prompt=prompt, **gen_kwargs):
             yield b
 
     @track_time("Orchestrator.astream_one")
-    async def _astream_one(self, text: str, **gen_kwargs) -> AsyncIterator[bytes]:
-        prompt    = svara_prompt(text, self.speaker_id)
+    async def _astream_one(self, text: str, prompt: Optional[str] = None, **gen_kwargs) -> AsyncIterator[bytes]:
+        # Use provided prompt or build from text + speaker_id
+        if prompt is None:
+            prompt = svara_prompt(text, self.speaker_id)
+        else:
+            prompt = prompt
         audio_buf = AudioBuffer(self.prebuffer_samples)
         loop = asyncio.get_running_loop()
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) if self.concurrent_decode else None
         pending: List[asyncio.Task] = []
 
         def decode(win: List[int]) -> bytes:
-            return self.decoder.decode_window(win)
+            return self.codec.decode_window(win)
 
         async def submit_async(win: List[int]) -> bytes:
             if executor:

@@ -1,7 +1,7 @@
 __all__ = [
     "transports",
     "mapper",
-    "decoder_snac",
+    "snac_codec",
     "orchestrator",
     "sinks",
     "utils",
