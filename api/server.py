@@ -222,6 +222,8 @@ async def text_to_speech(
                 transcript=request_reference_transcript
             )
             logger.info(f"Prompt built (length: {len(prompt)} chars)")
+            logger.info(f"Prompt preview (first 500 chars): {prompt[:500]}")
+            logger.info(f"Prompt preview (last 200 chars): {prompt[-200:]}")
         except Exception as e:
             logger.error(f"Error building prompt: {str(e)}")
             raise HTTPException(

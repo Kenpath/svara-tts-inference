@@ -57,19 +57,21 @@ def svara_zero_shot_prompt(text: str, audio_tokens: List[int], transcript: Optio
     # Audio tokens are already offset (128266+), so we convert them directly
     audio_token_str = "".join([f"<custom_token_{token}>" for token in audio_tokens])
     
-    # Special tokens for prompt structure
-    start_token = "<custom_token_128259>"     # Start of segment
-    end_tokens = "<custom_token_128009><custom_token_128260><custom_token_128261><custom_token_128257>"  # End of segment
-    final_tokens = "<custom_token_128258><custom_token_128262>"  # Final separator
+    # Special tokens for prompt structure (matching notebook format)
+    start_token = "<custom_token_128259>"     # Start of audio segment
+    end_tokens = "<custom_token_128009><custom_token_128260><custom_token_128261><custom_token_128257>"  # End markers
+    final_tokens = "<custom_token_128258><custom_token_128262>"  # Separator before target
     
     if transcript and transcript.strip():
-        # WITH TRANSCRIPT: transcript + audio tokens + target text
-        # Format: <128259> transcript <end_tokens> audio_tokens <final_tokens> <128259> target_text <end_tokens>
-        prompt = f"{start_token} {transcript} {end_tokens}{audio_token_str}{final_tokens}{start_token} {text} {end_tokens}"
+        # WITH TRANSCRIPT: <start> transcript_text <end> audio_tokens <final> <start> target_text <end>
+        # Wrap in the same format as standard TTS
+        base = f"{start_token} {transcript} {end_tokens}{audio_token_str}{final_tokens}{start_token} {text} {end_tokens}"
+        prompt = "<custom_token_3>" + base + "<custom_token_4><custom_token_5>"
     else:
-        # WITHOUT TRANSCRIPT: audio tokens only + target text
-        # Format: audio_tokens <final_tokens> <128259> target_text <end_tokens>
-        prompt = f"{audio_token_str}{final_tokens}{start_token} {text} {end_tokens}"
+        # WITHOUT TRANSCRIPT: audio_tokens <final> <start> target_text <end>
+        # Wrap in the same format as standard TTS
+        base = f"{audio_token_str}{final_tokens}{start_token} {text} {end_tokens}"
+        prompt = "<custom_token_3>" + base + "<custom_token_4><custom_token_5>"
     
     return prompt
 
