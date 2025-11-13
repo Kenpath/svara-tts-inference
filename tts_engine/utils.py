@@ -80,19 +80,11 @@ def svara_zero_shot_prompt(
     # 128261 -> <custom_token_5>, 128257 -> <custom_token_1>, 128258 -> <custom_token_2>,
     # 128262 -> <custom_token_6>, 128266+ -> audio tokens
     audio_token_str = "".join([f"<custom_token_{token}>" for token in audio_tokens])
-    previous_audio_prompt = f"{START_OF_AI}{END_OF_AI}{audio_token_str}{END_OF_SPEECH}"
-    if transcript and transcript.strip():
-        previous_text_prompt = f"{START_OF_HUMAN}{AUDIO} {transcript}{EOT_ID}{END_OF_HUMAN}"
-    else:
-        previous_text_prompt = ""
-   
+    previous_audio_prompt = f"{START_OF_SPEECH}{audio_token_str}{END_OF_SPEECH}"
+    previous_text_prompt  = f"{START_OF_HUMAN}{AUDIO} {transcript}{EOT_ID}{END_OF_HUMAN}" if transcript and transcript.strip() else ""
     previous_prompt = previous_text_prompt + previous_audio_prompt
     current_text_prompt = f"{START_OF_HUMAN}{AUDIO} {text}{EOT_ID}{END_OF_HUMAN}{START_OF_AI}"
-    prompt = previous_prompt + current_text_prompt
-    print(prompt)
-    return prompt
-
-
+    return previous_prompt + current_text_prompt
 
 
 def _split_text_recursive(
