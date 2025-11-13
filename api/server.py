@@ -208,12 +208,15 @@ async def text_to_speech(
         try:
             logger.info(f"Loading reference audio from bytes ({len(request_reference_audio_bytes)} bytes)")
             audio_tensor, sample_rate = load_audio_from_bytes(request_reference_audio_bytes, device=TTS_DEVICE)
+            logger.info(f"Audio loaded: shape={audio_tensor.shape}, sr={sample_rate}Hz, min={audio_tensor.min():.3f}, max={audio_tensor.max():.3f}")
             
             # Encode audio to SNAC tokens
             logger.info(f"Encoding audio to SNAC tokens")
             codec = SNACCodec(device=TTS_DEVICE)
             audio_tokens = codec.encode_audio(audio_tensor, input_sample_rate=sample_rate, add_token_offsets=True)
             logger.info(f"Audio tokens encoded to {len(audio_tokens)} tokens")
+            logger.info(f"First 10 tokens: {audio_tokens[:10]}")
+            logger.info(f"Last 10 tokens: {audio_tokens[-10:]}")
             
             # Build zero-shot prompt
             prompt = svara_zero_shot_prompt(

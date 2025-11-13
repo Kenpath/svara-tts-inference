@@ -39,6 +39,8 @@ def svara_zero_shot_prompt(text: str, audio_tokens: List[int], transcript: Optio
     Creates a prompt that includes reference audio tokens (and optionally a transcript)
     followed by the target text to synthesize in the cloned voice.
     
+    IMPORTANT: Zero-shot does NOT use the standard TTS wrapper tokens!
+    
     Args:
         text: The target text to synthesize.
         audio_tokens: SNAC token sequence from the reference audio (with offsets).
@@ -57,21 +59,19 @@ def svara_zero_shot_prompt(text: str, audio_tokens: List[int], transcript: Optio
     # Audio tokens are already offset (128266+), so we convert them directly
     audio_token_str = "".join([f"<custom_token_{token}>" for token in audio_tokens])
     
-    # Special tokens for prompt structure (matching notebook format)
-    start_token = "<custom_token_128259>"     # Start of audio segment
+    # Special tokens for prompt structure (matching notebook format exactly)
+    start_token = "<custom_token_128259>"     # Start marker
     end_tokens = "<custom_token_128009><custom_token_128260><custom_token_128261><custom_token_128257>"  # End markers
-    final_tokens = "<custom_token_128258><custom_token_128262>"  # Separator before target
+    final_tokens = "<custom_token_128258><custom_token_128262>"  # Separator
     
     if transcript and transcript.strip():
-        # WITH TRANSCRIPT: <start> transcript_text <end> audio_tokens <final> <start> target_text <end>
-        # Wrap in the same format as standard TTS
-        base = f"{start_token} {transcript} {end_tokens}{audio_token_str}{final_tokens}{start_token} {text} {end_tokens}"
-        prompt = "<custom_token_3>" + base + "<custom_token_4><custom_token_5>"
+        # WITH TRANSCRIPT: <start> transcript <end> audio_tokens <final> <start> text <end>
+        # Note: NO standard TTS wrapper for zero-shot!
+        prompt = f"{start_token} {transcript} {end_tokens}{audio_token_str}{final_tokens}{start_token} {text} {end_tokens}"
     else:
-        # WITHOUT TRANSCRIPT: audio_tokens <final> <start> target_text <end>
-        # Wrap in the same format as standard TTS
-        base = f"{audio_token_str}{final_tokens}{start_token} {text} {end_tokens}"
-        prompt = "<custom_token_3>" + base + "<custom_token_4><custom_token_5>"
+        # WITHOUT TRANSCRIPT: audio_tokens <final> <start> text <end>
+        # Note: NO standard TTS wrapper for zero-shot!
+        prompt = f"{audio_token_str}{final_tokens}{start_token} {text} {end_tokens}"
     
     return prompt
 
