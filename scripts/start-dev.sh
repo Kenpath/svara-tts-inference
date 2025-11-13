@@ -98,7 +98,6 @@ python3 -m vllm.entrypoints.openai.api_server \
     --tensor-parallel-size "$VLLM_TENSOR_PARALLEL_SIZE" \
     --trust-remote-code \
     --dtype auto \
-    --enforce-eager \
     --quantization "$VLLM_QUANTIZATION" \
     > /tmp/vllm.log 2>&1 &
 
