@@ -9,6 +9,19 @@ from io import BytesIO
 
 logger = logging.getLogger(__name__)
 
+BEGIN_OF_TEXT   = "<|begin_of_text|>" # 128000
+END_OF_TEXT     = "<|end_of_text|>" # 128001
+AUDIO           = "<|audio|>" # 156939
+EOT_ID          = "<|eot_id|>" # 128009
+START_OF_SPEECH = "<custom_token_1>" # 128257
+END_OF_SPEECH   = "<custom_token_2>" # 128258
+START_OF_HUMAN  = "<custom_token_3>" # 128259
+END_OF_HUMAN    = "<custom_token_4>" # 128260
+START_OF_AI     = "<custom_token_5>" # 128261
+END_OF_AI       = "<custom_token_6>" # 128262
+PAD_TOKEN       = "<custom_token_7>" # 128263
+
+
 def svara_prompt(text: str, speaker_id: str) -> str:
     """Format the prompt for the Svara-TTS model.
     
@@ -16,8 +29,7 @@ def svara_prompt(text: str, speaker_id: str) -> str:
         text: The text to synthesize.
         speaker_id: The speaker identifier in "Language (Gender)" format (e.g., "Hindi (Male)").
     """
-    base = f"<|audio|> {speaker_id}: {text}<|eot_id|>"
-    return "<custom_token_3>" + base + "<custom_token_4><custom_token_5>"
+    return f"{START_OF_HUMAN}{AUDIO} {speaker_id}: {text}{EOT_ID}{END_OF_HUMAN}{START_OF_AI}"
 
 
 def create_speaker_id(lang_code: str, gender: Literal["male", "female"]) -> str:
@@ -41,11 +53,7 @@ def svara_zero_shot_prompt(
     transcript: Optional[str] = None,
 ) -> Union[str, List[int]]:
     """
-    Format the zero-shot voice cloning prompt for the Svara-TTS model.
-    
-    CRITICAL: This function returns token IDs directly (not a string) when a tokenizer
-    is provided. This avoids unnecessary encode->decode->re-encode cycles.
-    
+    Format the zero-shot voice cloning prompt for the Svara-TTS model.    
     Args:
         text: The target text to synthesize.
         audio_tokens: SNAC token sequence from the reference audio (with offsets).
@@ -53,13 +61,6 @@ def svara_zero_shot_prompt(
                    improves voice cloning quality.
     
     Returns:
-        - List[int]: Token IDs ready for the model (when tokenizer provided)
-        - str: Formatted prompt string (fallback when no tokenizer)
-        
-    Example:
-        >>> audio_tokens = [128266, 130362, ...]  # From codec.encode_audio()
-        >>> prompt_ids = svara_zero_shot_prompt("Hello world", audio_tokens, "Reference text")
-        >>> # prompt_ids is a list of integers, ready for vLLM's prompt_token_ids parameter
     """
 
     # Correct token ID -> content mapping (from tokenizer config):
@@ -67,12 +68,17 @@ def svara_zero_shot_prompt(
     # 128261 -> <custom_token_5>, 128257 -> <custom_token_1>, 128258 -> <custom_token_2>,
     # 128262 -> <custom_token_6>, 128266+ -> audio tokens
     audio_token_str = "".join([f"<custom_token_{token}>" for token in audio_tokens])
+    previous_audio_prompt = f"{START_OF_AI}{END_OF_AI}{audio_token_str}{END_OF_SPEECH}"
     if transcript and transcript.strip():
-        previous_prompt = f"<custom_token_3><|audio|> {transcript}<|eot_id|><custom_token_4><custom_token_5>{audio_token_str}<custom_token_2><custom_token_6>"
+        previous_text_prompt = f"{START_OF_HUMAN}{AUDIO} {transcript}{EOT_ID}{END_OF_HUMAN}"
     else:
-        previous_prompt = f"<custom_token_4><custom_token_5>{audio_token_str}<custom_token_2><custom_token_6>"
-    current_prompt = f"<|audio|> {text}<|eot_id|><custom_token_4><custom_token_5>"
-    return previous_prompt + current_prompt
+        previous_text_prompt = ""
+   
+    previous_prompt = previous_audio_prompt + previous_text_prompt
+    
+    current_text_prompt = f"{START_OF_HUMAN}{AUDIO} {text}{EOT_ID}{END_OF_HUMAN}{START_OF_AI}{END_OF_AI}{END_OF_TEXT}"
+    return f"{previous_prompt}{PAD_TOKEN}{current_text_prompt}"
+
 
 _DEFAULT_SEPARATORS = [
     "\n\n",   # paragraphs
