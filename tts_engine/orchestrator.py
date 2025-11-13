@@ -3,12 +3,15 @@ from __future__ import annotations
 from typing import Iterator, AsyncIterator, List, Optional, Literal
 import concurrent.futures
 import asyncio
+import logging
 from .transports import VLLMCompletionsTransport, VLLMCompletionsTransportAsync
 from .mapper import SvaraMapper, extract_custom_token_numbers
 from .snac_codec import SNACCodec
 from .utils import svara_prompt, create_speaker_id
 from .buffers import AudioBuffer, SyncFuture
 from .timing import track_time
+
+logger = logging.getLogger(__name__)
 
 class SvaraTTSOrchestrator:
     """
@@ -72,6 +75,10 @@ class SvaraTTSOrchestrator:
             prompt = svara_prompt(text, self.speaker_id)
         else:
             prompt = prompt
+        
+        logger.info(f"Final prompt before tokenization (length: {len(prompt)} chars)")
+        logger.debug(f"Full prompt: {prompt}")
+        
         audio_buf = AudioBuffer(self.prebuffer_samples)
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) if self.concurrent_decode else None
         pending: List[concurrent.futures.Future] = []
@@ -130,6 +137,10 @@ class SvaraTTSOrchestrator:
             prompt = svara_prompt(text, self.speaker_id)
         else:
             prompt = prompt
+        
+        logger.info(f"Final prompt before tokenization (length: {len(prompt)} chars)")
+        logger.debug(f"Full prompt: {prompt}")
+        
         audio_buf = AudioBuffer(self.prebuffer_samples)
         loop = asyncio.get_running_loop()
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) if self.concurrent_decode else None

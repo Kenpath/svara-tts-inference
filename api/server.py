@@ -249,6 +249,8 @@ async def text_to_speech(
             )
         
         prompt = svara_prompt(request_text, request_voice)
+        logger.info(f"Standard prompt built (length: {len(prompt)} chars)")
+        logger.info(f"Prompt: {prompt}")
     
     # Use global orchestrator (already initialized, SNAC model cached)
     request_orchestrator = orchestrator
