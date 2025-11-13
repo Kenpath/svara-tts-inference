@@ -11,7 +11,7 @@ import logging
 from typing import Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Response, File, UploadFile, Form
 from fastapi.responses import StreamingResponse
 import sys
 from pathlib import Path
@@ -120,59 +120,108 @@ async def get_voices(model_id: Optional[str] = None):
 
 
 @app.post("/v1/text-to-speech")
-async def text_to_speech(request: TTSRequest):
+async def text_to_speech(
+    # Accept both JSON (via TTSRequest) and multipart/form-data
+    text: Optional[str] = Form(None),
+    voice: Optional[str] = Form(None),
+    reference_audio: Optional[UploadFile] = File(None),
+    reference_transcript: Optional[str] = Form(None),
+    model_id: str = Form(default="svara-tts-v1"),
+    stream: bool = Form(default=True),
+    temperature: Optional[float] = Form(None),
+    top_p: Optional[float] = Form(None),
+    top_k: Optional[int] = Form(None),
+    repetition_penalty: Optional[float] = Form(None),
+    max_tokens: Optional[int] = Form(None),
+    # JSON body (used when Content-Type is application/json)
+    json_body: Optional[TTSRequest] = None,
+):
     """
     Convert text to speech with streaming or non-streaming response.
     
     Supports two modes:
     1. Standard TTS: Provide 'voice' parameter
-    2. Zero-shot cloning: Provide 'reference_audio' (and optionally 'reference_transcript')
+    2. Zero-shot cloning: Provide 'reference_audio' file (and optionally 'reference_transcript')
     
-    Args:
-        request: TTS request with text, voice/reference_audio, and options
+    Accepts both:
+    - JSON (Content-Type: application/json) with base64-encoded reference_audio
+    - Multipart form data (Content-Type: multipart/form-data) with file upload
     
     Returns:
         Raw PCM16 audio bytes (streaming or complete)
     """
+    # Handle both JSON and multipart/form-data
+    if json_body is not None:
+        # JSON request
+        request_text = json_body.text
+        request_voice = json_body.voice
+        request_reference_audio_bytes = json_body.reference_audio
+        request_reference_transcript = json_body.reference_transcript
+        request_model_id = json_body.model_id
+        request_stream = json_body.stream
+        request_temperature = json_body.temperature
+        request_top_p = json_body.top_p
+        request_top_k = json_body.top_k
+        request_repetition_penalty = json_body.repetition_penalty
+        request_max_tokens = json_body.max_tokens
+    else:
+        # Multipart form data request
+        if text is None:
+            raise HTTPException(status_code=400, detail="'text' field is required")
+        request_text = text
+        request_voice = voice
+        request_reference_transcript = reference_transcript
+        request_model_id = model_id
+        request_stream = stream
+        request_temperature = temperature
+        request_top_p = top_p
+        request_top_k = top_k
+        request_repetition_penalty = repetition_penalty
+        request_max_tokens = max_tokens
+        
+        # Handle file upload for reference_audio
+        if reference_audio is not None:
+            request_reference_audio_bytes = await reference_audio.read()
+        else:
+            request_reference_audio_bytes = None
+    
     # Validate that either voice or reference_audio is provided
-    if not request.voice and not request.reference_audio:
+    if not request_voice and not request_reference_audio_bytes:
         raise HTTPException(
             status_code=400,
             detail="Either 'voice' or 'reference_audio' must be provided"
         )
     
     # Currently only v1 is implemented
-    if request.model_id != "svara-tts-v1":
+    if request_model_id != "svara-tts-v1":
         raise HTTPException(
             status_code=501,
-            detail=f"Model '{request.model_id}' is not yet implemented. Currently only 'svara-tts-v1' is supported."
+            detail=f"Model '{request_model_id}' is not yet implemented. Currently only 'svara-tts-v1' is supported."
         )
     
     # Determine mode: zero-shot or standard
-    zero_shot_mode = request.reference_audio is not None
+    zero_shot_mode = request_reference_audio_bytes is not None
     prompt = None
     
     if zero_shot_mode:
         # Zero-shot voice cloning mode
         try:
-            # Load audio from bytes
-            logger.info(f"Loading reference audio from bytes")
-            audio_tensor, sample_rate = load_audio_from_bytes(request.reference_audio, device=TTS_DEVICE)
+            logger.info(f"Loading reference audio from bytes ({len(request_reference_audio_bytes)} bytes)")
+            audio_tensor, sample_rate = load_audio_from_bytes(request_reference_audio_bytes, device=TTS_DEVICE)
             
-
             # Encode audio to SNAC tokens
             logger.info(f"Encoding audio to SNAC tokens")
             codec = SNACCodec(device=TTS_DEVICE)
             audio_tokens = codec.encode_audio(audio_tensor, input_sample_rate=sample_rate, add_token_offsets=True)
             logger.info(f"Audio tokens encoded to {len(audio_tokens)} tokens")
+            
             # Build zero-shot prompt
             prompt = svara_zero_shot_prompt(
-                text=request.text,
+                text=request_text,
                 audio_tokens=audio_tokens,
-                transcript=request.reference_transcript
+                transcript=request_reference_transcript
             )
-            logger.info(f"Prompt built: {prompt}")            
-            logger.info(f"Prompt length: {len(prompt)} tokens")
+            logger.info(f"Prompt built (length: {len(prompt)} chars)")
         except Exception as e:
             logger.error(f"Error building prompt: {str(e)}")
             raise HTTPException(
@@ -181,37 +230,37 @@ async def text_to_speech(request: TTSRequest):
             )
     else:
         # Standard TTS mode - build standard prompt
-        if not request.voice:
+        if not request_voice:
             raise HTTPException(
                 status_code=400,
                 detail="'voice' parameter is required for standard TTS mode"
             )
         from tts_engine.utils import svara_prompt
-        prompt = svara_prompt(request.text, request.voice)
+        prompt = svara_prompt(request_text, request_voice)
     
     # Use global orchestrator (already initialized, SNAC model cached)
     request_orchestrator = orchestrator
     
     # Build generation kwargs from request parameters
     gen_kwargs = {}
-    if request.temperature is not None:
-        gen_kwargs["temperature"] = request.temperature
-    if request.top_p is not None:
-        gen_kwargs["top_p"] = request.top_p
-    if request.top_k is not None:
-        gen_kwargs["top_k"] = request.top_k
-    if request.repetition_penalty is not None:
-        gen_kwargs["repetition_penalty"] = request.repetition_penalty
-    if request.max_tokens is not None:
-        gen_kwargs["max_tokens"] = request.max_tokens
+    if request_temperature is not None:
+        gen_kwargs["temperature"] = request_temperature
+    if request_top_p is not None:
+        gen_kwargs["top_p"] = request_top_p
+    if request_top_k is not None:
+        gen_kwargs["top_k"] = request_top_k
+    if request_repetition_penalty is not None:
+        gen_kwargs["repetition_penalty"] = request_repetition_penalty
+    if request_max_tokens is not None:
+        gen_kwargs["max_tokens"] = request_max_tokens
     
     # Handle streaming vs non-streaming
-    if request.stream:
+    if request_stream:
         # Streaming response
         async def audio_stream():
             """Stream audio chunks as they're generated."""
             try:
-                async for chunk in request_orchestrator.astream(request.text, prompt=prompt, **gen_kwargs):
+                async for chunk in request_orchestrator.astream(request_text, prompt=prompt, **gen_kwargs):
                     yield chunk
             except Exception as e:
                 print(f"Error during streaming: {e}")
@@ -231,7 +280,7 @@ async def text_to_speech(request: TTSRequest):
         # Non-streaming: collect all audio chunks
         try:
             audio_chunks = []
-            async for chunk in request_orchestrator.astream(request.text, prompt=prompt, **gen_kwargs):
+            async for chunk in request_orchestrator.astream(request_text, prompt=prompt, **gen_kwargs):
                 audio_chunks.append(chunk)
             
             complete_audio = b"".join(audio_chunks)
