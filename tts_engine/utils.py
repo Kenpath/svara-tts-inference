@@ -71,7 +71,7 @@ def svara_zero_shot_prompt(
         previous_prompt = f"<custom_token_3><|audio|> {transcript}<|eot_id|><custom_token_4><custom_token_5>{audio_token_str}<custom_token_2><custom_token_6>"
     else:
         previous_prompt = f"<custom_token_4><custom_token_5>{audio_token_str}<custom_token_2><custom_token_6>"
-    current_prompt = "<|audio|> {text}<|eot_id|><custom_token_4><custom_token_5>"
+    current_prompt = f"<|audio|> {text}<|eot_id|><custom_token_4><custom_token_5>"
     return previous_prompt + current_prompt
 
 _DEFAULT_SEPARATORS = [
