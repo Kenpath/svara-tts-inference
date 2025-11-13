@@ -39,7 +39,6 @@ TTS_DEVICE = os.getenv("TTS_DEVICE", None)  # None = auto-detect (CUDA/MPS/CPU)
 
 # Global instances (initialized in lifespan)
 orchestrator: Optional[SvaraTTSOrchestrator] = None
-tokenizer = None  # Model tokenizer for zero-shot prompt construction
 
 
 # ============================================================================
@@ -49,7 +48,7 @@ tokenizer = None  # Model tokenizer for zero-shot prompt construction
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize and cleanup resources."""
-    global orchestrator, tokenizer
+    global orchestrator
     
     print(f"🚀 Initializing Svara TTS API...")
     print(f"   vLLM URL: {VLLM_BASE_URL}")
@@ -68,12 +67,7 @@ async def lifespan(app: FastAPI):
         max_workers=2,
     )
     
-    # Initialize tokenizer for zero-shot prompt construction
-    from transformers import AutoTokenizer
-    tokenizer = AutoTokenizer.from_pretrained(VLLM_MODEL)
-    
     print(f"✓ Orchestrator initialized")
-    print(f"✓ Tokenizer loaded")
     print(f"✓ Loaded {len(get_all_voices())} voices")
     
     yield
@@ -210,36 +204,32 @@ async def text_to_speech(
     prompt = None
     
     if zero_shot_mode:
-        # Zero-shot voice cloning mode
-        try:
-            logger.info(f"Loading reference audio from bytes ({len(request_reference_audio_bytes)} bytes)")
-            audio_tensor, sample_rate = load_audio_from_bytes(request_reference_audio_bytes, device=TTS_DEVICE)
-            logger.info(f"Audio loaded: shape={audio_tensor.shape}, sr={sample_rate}Hz, min={audio_tensor.min():.3f}, max={audio_tensor.max():.3f}")
-            
-            # Encode audio to SNAC tokens
-            logger.info(f"Encoding audio to SNAC tokens")
-            codec = SNACCodec(device=TTS_DEVICE)
-            audio_tokens = codec.encode_audio(audio_tensor, input_sample_rate=sample_rate, add_token_offsets=True)
-            logger.info(f"Audio tokens encoded to {len(audio_tokens)} tokens")
-            logger.info(f"First 10 tokens: {audio_tokens[:10]}")
-            logger.info(f"Last 10 tokens: {audio_tokens[-10:]}")
-            
-            # Build zero-shot prompt (using tokenizer like the notebook)
-            prompt = svara_zero_shot_prompt(
-                text=request_text,
-                audio_tokens=audio_tokens,
-                transcript=request_reference_transcript,
-                tokenizer=tokenizer
-            )
+        logger.info(f"Loading reference audio from bytes ({len(request_reference_audio_bytes)} bytes)")
+        audio_tensor, sample_rate = load_audio_from_bytes(request_reference_audio_bytes, device=TTS_DEVICE)
+        logger.info(f"Audio loaded: shape={audio_tensor.shape}, sr={sample_rate}Hz, min={audio_tensor.min():.3f}, max={audio_tensor.max():.3f}")
+        
+        # Encode audio to SNAC tokens
+        logger.info(f"Encoding audio to SNAC tokens")
+        codec = SNACCodec(device=TTS_DEVICE)
+        audio_tokens = codec.encode_audio(audio_tensor, input_sample_rate=sample_rate, add_token_offsets=True)
+        logger.info(f"Audio tokens encoded to {len(audio_tokens)} tokens")
+        logger.info(f"First 10 tokens: {audio_tokens[:10]}")
+        logger.info(f"Last 10 tokens: {audio_tokens[-10:]}")
+        
+        # Build zero-shot prompt (returns token IDs directly)
+        prompt = svara_zero_shot_prompt(
+            text=request_text,
+            audio_tokens=audio_tokens,
+            transcript=request_reference_transcript,
+        )
+        if isinstance(prompt, list):
+            logger.info(f"Prompt built: {len(prompt)} token IDs")
+            logger.info(f"Token ID preview (first 50): {prompt[:50]}")
+            logger.info(f"Token ID preview (last 50): {prompt[-50:]}")
+        else:
             logger.info(f"Prompt built (length: {len(prompt)} chars)")
             logger.info(f"Prompt preview (first 500 chars): {prompt[:500]}")
             logger.info(f"Prompt preview (last 200 chars): {prompt[-200:]}")
-        except Exception as e:
-            logger.error(f"Error building prompt: {str(e)}")
-            raise HTTPException(
-                status_code=400,
-                detail=f"Failed to process reference audio: {str(e)}"
-            )
     else:
         # Standard TTS mode - build standard prompt
         if not request_voice:

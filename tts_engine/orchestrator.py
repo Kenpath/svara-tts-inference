@@ -1,6 +1,6 @@
 
 from __future__ import annotations
-from typing import Iterator, AsyncIterator, List, Optional, Literal
+from typing import Iterator, AsyncIterator, List, Optional, Literal, Union
 import concurrent.futures
 import asyncio
 import logging
@@ -57,27 +57,30 @@ class SvaraTTSOrchestrator:
         self.max_workers    = max_workers
         
     # ------------ SYNC path ------------
-    def stream(self, text: str, prompt: Optional[str] = None, **gen_kwargs) -> Iterator[bytes]:
+    def stream(self, text: str, prompt: Optional[Union[str, List[int]]] = None, **gen_kwargs) -> Iterator[bytes]:
         """Stream the TTS output.
         
         Args:
             text: The text to synthesize.
-            prompt: Optional pre-computed prompt. If provided, used directly.
+            prompt: Optional pre-computed prompt. Can be a string or list of token IDs.
                    If None, builds prompt from text and speaker_id.
             gen_kwargs: Additional keyword arguments to pass to the transport.
         """
         yield from self._stream_one(text, prompt=prompt, **gen_kwargs)
 
     @track_time("Orchestrator.stream_one")
-    def _stream_one(self, text: str, prompt: Optional[str] = None, **gen_kwargs) -> Iterator[bytes]:
+    def _stream_one(self, text: str, prompt: Optional[Union[str, List[int]]] = None, **gen_kwargs) -> Iterator[bytes]:
         # Use provided prompt or build from text + speaker_id
         if prompt is None:
             prompt = svara_prompt(text, self.speaker_id)
-        else:
-            prompt = prompt
         
-        logger.info(f"Final prompt before tokenization (length: {len(prompt)} chars)")
-        logger.debug(f"Full prompt: {prompt}")
+        # Log prompt details
+        if isinstance(prompt, list):
+            logger.info(f"Final prompt before inference: {len(prompt)} token IDs")
+            logger.debug(f"Token IDs (first 50): {prompt[:50]}")
+        else:
+            logger.info(f"Final prompt before tokenization: {len(prompt)} chars")
+            logger.debug(f"Full prompt: {prompt}")
         
         audio_buf = AudioBuffer(self.prebuffer_samples)
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) if self.concurrent_decode else None
@@ -112,12 +115,12 @@ class SvaraTTSOrchestrator:
                 executor.shutdown(wait=True)
 
     # ------------ ASYNC path ------------
-    async def astream(self, text: str, prompt: Optional[str] = None, **gen_kwargs) -> AsyncIterator[bytes]:
+    async def astream(self, text: str, prompt: Optional[Union[str, List[int]]] = None, **gen_kwargs) -> AsyncIterator[bytes]:
         """Async stream the TTS output.
         
         Args:
             text: The text to synthesize.
-            prompt: Optional pre-computed prompt. If provided, used directly.
+            prompt: Optional pre-computed prompt. Can be a string or list of token IDs.
                    If None, builds prompt from text and speaker_id.
             gen_kwargs: Additional keyword arguments to pass to the transport.
         """
@@ -131,15 +134,18 @@ class SvaraTTSOrchestrator:
             yield b
 
     @track_time("Orchestrator.astream_one")
-    async def _astream_one(self, text: str, prompt: Optional[str] = None, **gen_kwargs) -> AsyncIterator[bytes]:
+    async def _astream_one(self, text: str, prompt: Optional[Union[str, List[int]]] = None, **gen_kwargs) -> AsyncIterator[bytes]:
         # Use provided prompt or build from text + speaker_id
         if prompt is None:
             prompt = svara_prompt(text, self.speaker_id)
-        else:
-            prompt = prompt
         
-        logger.info(f"Final prompt before tokenization (length: {len(prompt)} chars)")
-        logger.debug(f"Full prompt: {prompt}")
+        # Log prompt details
+        if isinstance(prompt, list):
+            logger.info(f"Final prompt before inference: {len(prompt)} token IDs")
+            logger.debug(f"Token IDs (first 50): {prompt[:50]}")
+        else:
+            logger.info(f"Final prompt before tokenization: {len(prompt)} chars")
+            logger.debug(f"Full prompt: {prompt}")
         
         audio_buf = AudioBuffer(self.prebuffer_samples)
         loop = asyncio.get_running_loop()

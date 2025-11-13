@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 import json
-from typing import Iterator, AsyncIterator, Optional, Dict, Any
+from typing import Iterator, AsyncIterator, Optional, Dict, Any, Union, List
 import requests
 import aiohttp
 from .timing import track_time
@@ -18,10 +18,9 @@ class VLLMCompletionsTransport:
             self.headers.update(headers)
 
     @track_time("vLLM.stream")
-    def stream(self, prompt: str, **gen_kwargs) -> Iterator[str]:
+    def stream(self, prompt: Union[str, List[int]], **gen_kwargs) -> Iterator[str]:
         payload: Dict[str, Any] = {
             "model": self.model,
-            "prompt": prompt,
             "stream": True,
             "max_tokens": gen_kwargs.get("max_tokens", 2048),
             "temperature": gen_kwargs.get("temperature", 0.75),
@@ -30,6 +29,12 @@ class VLLMCompletionsTransport:
             "repetition_penalty": gen_kwargs.get("repetition_penalty", 1.1),
             "stop_token_ids": [128258,128262]
         }
+        
+        # Use prompt_token_ids if we have a list, otherwise use prompt string
+        if isinstance(prompt, list):
+            payload["prompt_token_ids"] = prompt
+        else:
+            payload["prompt"] = prompt
 
         with requests.post(self.url, headers=self.headers, json=payload, stream=True) as resp:
             resp.raise_for_status()
@@ -66,10 +71,9 @@ class VLLMCompletionsTransportAsync:
             self.headers.update(headers)
 
     @track_time("vLLM.astream")
-    async def astream(self, prompt: str, **gen_kwargs) -> AsyncIterator[str]:
+    async def astream(self, prompt: Union[str, List[int]], **gen_kwargs) -> AsyncIterator[str]:
         payload: Dict[str, Any] = {
             "model": self.model,
-            "prompt": prompt,
             "stream": True,
             "max_tokens": gen_kwargs.get("max_tokens", 2048),
             "temperature": gen_kwargs.get("temperature", 0.75),
@@ -77,6 +81,12 @@ class VLLMCompletionsTransportAsync:
             "repetition_penalty": gen_kwargs.get("repetition_penalty", 1.1),
             "stop_token_ids": [128258,128262]
         }
+        
+        # Use prompt_token_ids if we have a list, otherwise use prompt string
+        if isinstance(prompt, list):
+            payload["prompt_token_ids"] = prompt
+        else:
+            payload["prompt"] = prompt
 
         async with aiohttp.ClientSession() as sess:
             async with sess.post(self.url, headers=self.headers, json=payload) as resp:
