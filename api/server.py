@@ -7,6 +7,7 @@ Indian language voices and streaming audio generation.
 from __future__ import annotations
 import os
 import asyncio
+import logging
 from typing import Optional
 from contextlib import asynccontextmanager
 
@@ -14,6 +15,9 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import StreamingResponse
 import sys
 from pathlib import Path
+
+
+logger = logging.getLogger(__name__)
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -152,23 +156,25 @@ async def text_to_speech(request: TTSRequest):
         # Zero-shot voice cloning mode
         try:
             # Load audio from bytes
+            logger.info(f"Loading reference audio from bytes")
             audio_tensor, sample_rate = load_audio_from_bytes(request.reference_audio, device=TTS_DEVICE)
             
+
             # Encode audio to SNAC tokens
+            logger.info(f"Encoding audio to SNAC tokens")
             codec = SNACCodec(device=TTS_DEVICE)
             audio_tokens = codec.encode_audio(audio_tensor, input_sample_rate=sample_rate, add_token_offsets=True)
-            
+            logger.info(f"Audio tokens encoded to {len(audio_tokens)} tokens")
             # Build zero-shot prompt
             prompt = svara_zero_shot_prompt(
                 text=request.text,
                 audio_tokens=audio_tokens,
                 transcript=request.reference_transcript
             )
-            
-            # Use dummy speaker_id (won't be used since we have custom prompt)
-            speaker_id = "ZeroShot (Custom)"
-            
+            logger.info(f"Prompt built: {prompt}")            
+            logger.info(f"Prompt length: {len(prompt)} tokens")
         except Exception as e:
+            logger.error(f"Error building prompt: {str(e)}")
             raise HTTPException(
                 status_code=400,
                 detail=f"Failed to process reference audio: {str(e)}"
