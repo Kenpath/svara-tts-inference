@@ -22,6 +22,18 @@ END_OF_AI       = "<custom_token_6>" # 128262
 PAD_TOKEN       = "<custom_token_7>" # 128263
 
 
+_DEFAULT_SEPARATORS = [
+    "\n\n",   # paragraphs
+    "\n",     # lines
+    "। ",      # Hindi danda (sentence end)
+    ". ", "? ", "! ", "… ",  # sentence enders
+    ",",      # comma only if no space available
+    " ",      # space (preferred over comma)
+    "",       # hard fallback (character-level)
+]
+
+
+
 def svara_prompt(text: str, speaker_id: str) -> str:
     """Format the prompt for the Svara-TTS model.
     
@@ -76,18 +88,11 @@ def svara_zero_shot_prompt(
    
     previous_prompt = previous_text_prompt + previous_audio_prompt
     current_text_prompt = f"{START_OF_HUMAN}{AUDIO} {text}{EOT_ID}{END_OF_HUMAN}{START_OF_AI}{END_OF_AI}{END_OF_TEXT}"
-    return f"{previous_prompt}{PAD_TOKEN}{current_text_prompt}"
+    prompt = previous_prompt + current_text_prompt
+    print(prompt)
+    return prompt
 
 
-_DEFAULT_SEPARATORS = [
-    "\n\n",   # paragraphs
-    "\n",     # lines
-    "। ",      # Hindi danda (sentence end)
-    ". ", "? ", "! ", "… ",  # sentence enders
-    ",",      # comma only if no space available
-    " ",      # space (preferred over comma)
-    "",       # hard fallback (character-level)
-]
 
 
 def _split_text_recursive(
