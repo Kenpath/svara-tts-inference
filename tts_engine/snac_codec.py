@@ -4,9 +4,6 @@ from typing import List, Optional
 import numpy as np
 import torch
 from .timing import track_time
-import logging
-
-logger = logging.getLogger(__name__)
 
 # Global model cache to avoid reloading SNAC model for each instance
 _SNAC_MODEL_CACHE: dict[str, SNAC] = {}
@@ -69,7 +66,6 @@ class SNACCodec:
         
         # Get or load model from cache
         self.model = _get_or_load_snac_model(device, model_name)
-        logger.info(f"SNAC model {model_name} loaded on {device}")
 
     @track_time("SNAC.encode_audio")
     def encode_audio(

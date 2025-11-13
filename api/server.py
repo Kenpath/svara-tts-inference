@@ -174,19 +174,17 @@ async def text_to_speech(request: TTSRequest):
                 detail=f"Failed to process reference audio: {str(e)}"
             )
     else:
-        # Standard TTS mode
-        speaker_id = request.voice
+        # Standard TTS mode - build standard prompt
+        if not request.voice:
+            raise HTTPException(
+                status_code=400,
+                detail="'voice' parameter is required for standard TTS mode"
+            )
+        from tts_engine.utils import svara_prompt
+        prompt = svara_prompt(request.text, request.voice)
     
-    # Create orchestrator instance for this request
-    request_orchestrator = SvaraTTSOrchestrator(
-        base_url=VLLM_BASE_URL,
-        model=VLLM_MODEL,
-        speaker_id=speaker_id,
-        device=TTS_DEVICE,
-        prebuffer_seconds=0.5,
-        concurrent_decode=True,
-        max_workers=2,
-    )
+    # Use global orchestrator (already initialized, SNAC model cached)
+    request_orchestrator = orchestrator
     
     # Build generation kwargs from request parameters
     gen_kwargs = {}
