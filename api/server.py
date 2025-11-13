@@ -6,15 +6,14 @@ Indian language voices and streaming audio generation.
 """
 from __future__ import annotations
 import os
-import asyncio
+import sys
 import logging
+from pathlib import Path
 from typing import Optional
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Response, File, UploadFile, Form
 from fastapi.responses import StreamingResponse
-import sys
-from pathlib import Path
 
 
 logger = logging.getLogger(__name__)
@@ -25,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from tts_engine.voice_config import get_all_voices
 from tts_engine.orchestrator import SvaraTTSOrchestrator
 from tts_engine.timing import get_timing_stats, reset_timing_stats
-from tts_engine.utils import load_audio_from_bytes, svara_zero_shot_prompt
+from tts_engine.utils import load_audio_from_bytes, svara_zero_shot_prompt, svara_prompt
 from tts_engine.snac_codec import SNACCodec
 from api.models import VoiceResponse, VoicesResponse, TTSRequest
 
@@ -199,11 +198,12 @@ async def text_to_speech(
         )
     
     # Currently only v1 is implemented
-    if request_model_id != "svara-tts-v1":
-        raise HTTPException(
-            status_code=501,
-            detail=f"Model '{request_model_id}' is not yet implemented. Currently only 'svara-tts-v1' is supported."
-        )
+    # TODO: Implement other models when svara-tts-v2 is released
+    # if request_model_id != "svara-tts-v1":
+    #     raise HTTPException(
+    #         status_code=501,
+    #         detail=f"Model '{request_model_id}' is not yet implemented. Currently only 'svara-tts-v1' is supported."
+    #     )
     
     # Determine mode: zero-shot or standard
     zero_shot_mode = request_reference_audio_bytes is not None
@@ -247,7 +247,7 @@ async def text_to_speech(
                 status_code=400,
                 detail="'voice' parameter is required for standard TTS mode"
             )
-        from tts_engine.utils import svara_prompt
+        
         prompt = svara_prompt(request_text, request_voice)
     
     # Use global orchestrator (already initialized, SNAC model cached)
