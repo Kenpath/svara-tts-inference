@@ -16,7 +16,7 @@ echo ""
 VLLM_MODEL=${VLLM_MODEL:-kenpath/svara-tts-v1}
 VLLM_PORT=${VLLM_PORT:-8000}
 VLLM_HOST=${VLLM_HOST:-0.0.0.0}
-VLLM_GPU_MEMORY_UTILIZATION=${VLLM_GPU_MEMORY_UTILIZATION:-0.8}
+VLLM_GPU_MEMORY_UTILIZATION=${VLLM_GPU_MEMORY_UTILIZATION:-0.9}
 VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN:-8192}
 VLLM_TENSOR_PARALLEL_SIZE=${VLLM_TENSOR_PARALLEL_SIZE:-1}
 VLLM_QUANTIZATION=${VLLM_QUANTIZATION:-fp8}
@@ -95,9 +95,11 @@ python3 -m vllm.entrypoints.openai.api_server \
     --port "$VLLM_PORT" \
     --gpu-memory-utilization "$VLLM_GPU_MEMORY_UTILIZATION" \
     --max-model-len "$VLLM_MAX_MODEL_LEN" \
+    --max-num-batched-tokens "$VLLM_MAX_MODEL_LEN" \
     --tensor-parallel-size "$VLLM_TENSOR_PARALLEL_SIZE" \
     --trust-remote-code \
     --dtype auto \
+    --enforce-eager \
     --quantization "$VLLM_QUANTIZATION" \
     > /tmp/vllm.log 2>&1 &
 
