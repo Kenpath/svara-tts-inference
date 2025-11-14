@@ -3,6 +3,7 @@ from snac import SNAC
 from typing import List, Optional
 import numpy as np
 import torch
+from .utils import resample_audio
 from .timing import track_time
 
 # Global model cache to avoid reloading SNAC model for each instance
@@ -26,8 +27,12 @@ def _get_or_load_snac_model(device: str, model_name: str = "hubertsiuzdak/snac_2
     cache_key = f"{model_name}_{device}"
     
     if cache_key not in _SNAC_MODEL_CACHE:
+        print(f"[DEBUG] Loading SNAC model: {model_name} on device: {device}")
         model = SNAC.from_pretrained(model_name).eval().to(device)
+        print(f"[DEBUG] SNAC model loaded. Type: {type(model)}, Config: {model.config if hasattr(model, 'config') else 'N/A'}")
         _SNAC_MODEL_CACHE[cache_key] = model
+    else:
+        print(f"[DEBUG] Using cached SNAC model: {cache_key}")
     
     return _SNAC_MODEL_CACHE[cache_key]
 
@@ -103,9 +108,11 @@ class SNACCodec:
             700
         """
         # Resample to 24kHz if needed
-        if input_sample_rate != self.sample_rate:
-            from .utils import resample_audio
+        if input_sample_rate != self.sample_rate:            
             audio = resample_audio(audio, input_sample_rate, self.sample_rate, self.device)
+        
+        # Debug: Check audio after resampling
+        print(f"[DEBUG] Audio shape after resample: {audio.shape}")
         
         # Ensure proper shape: SNAC expects (batch, channels, samples)
         if audio.dim() == 1:
@@ -118,23 +125,43 @@ class SNACCodec:
         # Move to device and ensure float32
         audio = audio.to(dtype=torch.float32, device=self.device)
         
+        print(f"[DEBUG] Audio shape going into SNAC encode: {audio.shape}")
+        
         # Encode with SNAC
         with torch.inference_mode():
             codes = self.model.encode(audio)
         
-        # Interleave codes: [c0], [c1, c4], [c2, c3, c5, c6]
-        # Pattern for each frame: c0, c1, c2, c3, c4, c5, c6
-        all_codes = []
-        num_frames = codes[0].shape[1]
+        print(f"[DEBUG] SNAC codes shapes: codes[0]={codes[0].shape}, codes[1]={codes[1].shape}, codes[2]={codes[2].shape}")
         
-        for i in range(num_frames):
+        # SNAC produces hierarchical codes with different temporal resolutions:
+        # codes[0]: coarsest (e.g., 100 frames for 1 sec)
+        # codes[1]: 2x finer (e.g., 200 frames)
+        # codes[2]: 4x finer (e.g., 400 frames)
+        # 
+        # Interleave pattern per finest-resolution frame:
+        # For every 4 frames in codes[2], we get:
+        # - 1 code from codes[0]
+        # - 2 codes from codes[1] 
+        # - 4 codes from codes[2]
+        # Output order per coarse frame: c0, c1, c2, c3, c4, c5, c6
+        
+        all_codes = []
+        num_coarse_frames = codes[0].shape[1]
+        
+        for i in range(num_coarse_frames):
+            # Get indices for hierarchical codes
+            # Each coarse frame i corresponds to:
+            # - codes[0][i]
+            # - codes[1][2*i : 2*i+2] (2 codes)
+            # - codes[2][4*i : 4*i+4] (4 codes)
+            
             c0 = codes[0][0][i].item()
             c1 = codes[1][0][2 * i].item()
             c2 = codes[2][0][4 * i].item()
-            c3 = codes[2][0][(4 * i) + 1].item()
-            c4 = codes[1][0][(2 * i) + 1].item()
-            c5 = codes[2][0][(4 * i) + 2].item()
-            c6 = codes[2][0][(4 * i) + 3].item()
+            c3 = codes[2][0][4 * i + 1].item()
+            c4 = codes[1][0][2 * i + 1].item()
+            c5 = codes[2][0][4 * i + 2].item()
+            c6 = codes[2][0][4 * i + 3].item()
             
             if add_token_offsets:
                 # Add Svara-TTS vocabulary offsets
@@ -184,7 +211,7 @@ class SNACCodec:
             torch.any((codes_0 < 0) | (codes_0 > 4096)) or
             torch.any((codes_1 < 0) | (codes_1 > 4096)) or
             torch.any((codes_2 < 0) | (codes_2 > 4096))
-        ):
+        ):            
             return b""
         
         with torch.inference_mode():
@@ -193,5 +220,6 @@ class SNACCodec:
             audio = audio[:, :, 2048:4096]
         
         x = audio.detach().float().cpu().numpy().reshape(-1)
+        print(x.shape)
         pcm16 = (np.clip(x, -1.0, 1.0) * 32767.0).astype(np.int16)
         return pcm16.tobytes()

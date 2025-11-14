@@ -65,38 +65,70 @@ def svara_zero_shot_prompt(
     text: str, 
     audio_tokens: List[int], 
     transcript: Optional[str] = None,
+    tokenizer = None
 ) -> Union[str, List[int]]:
     """
-    Format the zero-shot voice cloning prompt for the Svara-TTS model.    
+    Format the zero-shot voice cloning prompt for the Svara-TTS model.
+    
+    Returns token IDs (list of ints) when tokenizer provided, for efficient vLLM usage.
+    
     Args:
         text: The target text to synthesize.
-        audio_tokens: SNAC token sequence from the reference audio (with offsets).
-        transcript: Optional transcript of the reference audio. Including this
-                   improves voice cloning quality.
+        audio_tokens: SNAC token sequence from the reference audio (WITH offsets: 128266+).
+        transcript: Optional transcript of the reference audio.
+        tokenizer: The model's tokenizer (required for token ID output).
     
     Returns:
+        List[int]: Token IDs ready for vLLM's prompt_token_ids parameter
     """
-
-    # Correct token ID -> content mapping (from tokenizer config):
-    # 128259 -> <custom_token_3>, 128009 -> <|eot_id|>, 128260 -> <custom_token_4>,
-    # 128261 -> <custom_token_5>, 128257 -> <custom_token_1>, 128258 -> <custom_token_2>,
-    # 128262 -> <custom_token_6>, 128266+ -> audio tokens
-    audio_token_str = "".join([f"<custom_token_{token}>" for token in audio_tokens])
-    previous_audio_prompt = f"{audio_token_str}{END_OF_SPEECH}{END_OF_AI}"
-    previous_text_prompt  = f"{START_OF_HUMAN}{AUDIO} {transcript}{EOT_ID}{END_OF_HUMAN}" if transcript and transcript.strip() else ""
-    current_text_prompt   = f"{START_OF_HUMAN}{AUDIO} {text}{EOT_ID}{END_OF_HUMAN}{START_OF_AI}"
+    import torch
     
-    print(f"Previous text prompt: {previous_text_prompt}")
-    print(f"Previous audio prompt: {previous_audio_prompt}")
-    print(f"Current text prompt: {current_text_prompt}")
+    # Token IDs for special tokens
+    START_OF_HUMAN_ID = 128259
+    EOT_ID = 128009
+    END_OF_HUMAN_ID = 128260
+    START_OF_AI_ID = 128261
+    START_OF_SPEECH_ID = 128257
+    END_OF_SPEECH_ID = 128258
+    END_OF_AI_ID = 128262
     
-    zero_shot_prompt = ''.join([
-        previous_text_prompt, 
-        previous_audio_prompt, 
-        current_text_prompt
-        ])
-
-    return zero_shot_prompt
+    if tokenizer is None:
+        raise ValueError("tokenizer is required for svara_zero_shot_prompt")
+    
+    # Build prompt as token IDs (matching notebook logic)
+    start_tokens = torch.tensor([[START_OF_HUMAN_ID]], dtype=torch.int64)
+    end_tokens = torch.tensor([[EOT_ID, END_OF_HUMAN_ID, START_OF_AI_ID, START_OF_SPEECH_ID]], dtype=torch.int64)
+    final_tokens = torch.tensor([[END_OF_SPEECH_ID, END_OF_AI_ID]], dtype=torch.int64)
+    audio_tokens_tensor = torch.tensor([audio_tokens], dtype=torch.int64)
+    
+    if transcript and transcript.strip():
+        # WITH TRANSCRIPT: <start_human> transcript_tokens <eot> <end_human> <start_ai> <start_speech> audio_tokens <end_speech> <end_ai>
+        transcript_tokens = tokenizer(transcript, return_tensors="pt").input_ids
+        zeroprompt_input_ids = torch.cat([
+            start_tokens,
+            transcript_tokens,
+            end_tokens,
+            audio_tokens_tensor,
+            final_tokens
+        ], dim=1)
+    else:
+        # WITHOUT TRANSCRIPT: audio_tokens <end_speech> <end_ai>
+        zeroprompt_input_ids = torch.cat([
+            audio_tokens_tensor,
+            final_tokens
+        ], dim=1)
+    
+    # Add target text: <start_human> text_tokens <eot> <end_human> <start_ai> <start_speech>
+    target_tokens = tokenizer(text, return_tensors="pt").input_ids
+    full_input_ids = torch.cat([
+        zeroprompt_input_ids,
+        start_tokens,
+        target_tokens,
+        end_tokens
+    ], dim=1)
+    
+    # Return as list of token IDs
+    return full_input_ids.flatten().tolist()
 
 
 def _split_text_recursive(

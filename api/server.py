@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from transformers import AutoTokenizer
 from tts_engine.voice_config import get_all_voices
 from tts_engine.orchestrator import SvaraTTSOrchestrator
 from tts_engine.timing import get_timing_stats, reset_timing_stats
@@ -39,6 +40,7 @@ TTS_DEVICE = os.getenv("TTS_DEVICE", None)  # None = auto-detect (CUDA/MPS/CPU)
 
 # Global instances (initialized in lifespan)
 orchestrator: Optional[SvaraTTSOrchestrator] = None
+tokenizer = None  # For zero-shot voice cloning
 
 
 # ============================================================================
@@ -48,7 +50,7 @@ orchestrator: Optional[SvaraTTSOrchestrator] = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize and cleanup resources."""
-    global orchestrator
+    global orchestrator, tokenizer
     
     print(f"🚀 Initializing Svara TTS API...")
     print(f"   vLLM URL: {VLLM_BASE_URL}")
@@ -66,6 +68,11 @@ async def lifespan(app: FastAPI):
         concurrent_decode=True,
         max_workers=2,
     )
+    
+    # Load tokenizer for zero-shot voice cloning
+    print(f"📦 Loading tokenizer for {VLLM_MODEL}...")
+    tokenizer = AutoTokenizer.from_pretrained(VLLM_MODEL)
+    print(f"✓ Tokenizer loaded")
     
     print(f"✓ Orchestrator initialized")
     print(f"✓ Loaded {len(get_all_voices())} voices")
@@ -212,7 +219,8 @@ async def text_to_speech(
         logger.info(f"Encoding audio to SNAC tokens")
         codec = SNACCodec(device=TTS_DEVICE)
         
-        audio_tokens = codec.encode_audio(audio_tensor, input_sample_rate=sample_rate, add_token_offsets=False)
+        # Encode with offsets (128266+) for use in prompt
+        audio_tokens = codec.encode_audio(audio_tensor, input_sample_rate=sample_rate, add_token_offsets=True)
         logger.info(f"Audio tokens encoded to {len(audio_tokens)} tokens")
         logger.info(f"First 10 tokens: {audio_tokens[:10]}")
         logger.info(f"Last 10 tokens: {audio_tokens[-10:]}")
@@ -222,6 +230,7 @@ async def text_to_speech(
             text=request_text,
             audio_tokens=audio_tokens,
             transcript=request_reference_transcript,
+            tokenizer=tokenizer
         )
         if isinstance(prompt, list):
             logger.info(f"Prompt built: {len(prompt)} token IDs")
