@@ -54,8 +54,14 @@ RUN pip3 install torch torchvision torchaudio --extra-index-url https://download
 # ============================================================================
 FROM pytorch-builder AS vllm-builder
 
+# Set environment variables for faster compilation if building from source
+ENV MAX_JOBS=4
+ENV NVCC_THREADS=4
+ENV TORCH_CUDA_ARCH_LIST="8.9;9.0"
+
 # Install vLLM (will use the PyTorch with CUDA 12.8 we already installed)
-RUN pip3 install vllm
+# Try to get pre-built wheel first, if not available it will build from source
+RUN pip3 install --no-build-isolation vllm || pip3 install vllm
 
 # ============================================================================
 # Stage 3: Install application dependencies
