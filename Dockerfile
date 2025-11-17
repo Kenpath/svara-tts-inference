@@ -1,42 +1,64 @@
 # Svara TTS API - Production Dockerfile
 # Multi-stage build for vLLM + SNAC + FastAPI deployment
+# CUDA 12.8 for NVIDIA Blackwell GPUs (RTX 5090)
 
-FROM nvidia/cuda:12.1.0-devel-ubuntu22.04 AS base
+FROM nvidia/cuda:12.8.0-devel-ubuntu22.04 AS base
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PATH="/usr/local/cuda/bin:${PATH}" \
+    LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
 
-# Install system dependencies
+# Install system dependencies including Python 3.11
 RUN apt-get update && apt-get install -y \
-    python3.10 \
+    software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y \
+    python3.11 \
+    python3.11-dev \
+    python3.11-venv \
     python3-pip \
     git \
     wget \
     curl \
     libsndfile1 \
     supervisor \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Upgrade pip
-RUN pip3 install --upgrade pip setuptools wheel
+# Set Python 3.11 as default
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
+
+# Upgrade pip and install uv for faster package management
+RUN python3 -m pip install --upgrade pip setuptools wheel \
+    && pip3 install uv
 
 # Set working directory
 WORKDIR /app
 
 # ============================================================================
-# Stage 1: Install vLLM with CUDA support
+# Stage 1: Install PyTorch with CUDA 12.8 support
 # ============================================================================
-FROM base AS vllm-builder
+FROM base AS pytorch-builder
 
-# Install vLLM with CUDA support
-RUN pip3 install vllm==0.6.3.post1
+# Install PyTorch with CUDA 12.8 support
+RUN pip3 install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu128
 
 # ============================================================================
-# Stage 2: Install application dependencies
+# Stage 2: Install vLLM with CUDA 12.8 support
+# ============================================================================
+FROM pytorch-builder AS vllm-builder
+
+# Install vLLM (will use the PyTorch with CUDA 12.8 we already installed)
+RUN pip3 install vllm
+
+# ============================================================================
+# Stage 3: Install application dependencies
 # ============================================================================
 FROM vllm-builder AS app-deps
 
@@ -50,7 +72,7 @@ RUN pip3 install -r requirements.txt
 RUN pip3 install soundfile numpy
 
 # ============================================================================
-# Stage 3: Final application image
+# Stage 4: Final application image
 # ============================================================================
 FROM app-deps AS final
 
@@ -70,17 +92,6 @@ RUN mkdir -p /var/log/supervisor /root/.cache/huggingface
 # 8000: vLLM server
 # 8080: FastAPI server
 EXPOSE 8000 8080
-
-# Set default environment variables
-ENV VLLM_MODEL=kenpath/svara-tts-v1 \
-    VLLM_PORT=8000 \
-    VLLM_HOST=0.0.0.0 \
-    VLLM_GPU_MEMORY_UTILIZATION=0.9 \
-    VLLM_MAX_MODEL_LEN=2048 \
-    VLLM_BASE_URL=http://localhost:8000/v1 \
-    API_PORT=8080 \
-    API_HOST=0.0.0.0 \
-    TTS_DEVICE=cuda
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
