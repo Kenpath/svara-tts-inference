@@ -5,6 +5,9 @@ from typing import Iterator, AsyncIterator, Optional, Dict, Any, Union, List
 import requests
 import aiohttp
 from .timing import track_time
+from .constants import END_OF_SPEECH
+from .codec import get_or_load_tokenizer
+import os
 class VLLMCompletionsTransport:
     """
     Sync transport for OpenAI-compatible /v1/completions streaming (SSE).
@@ -27,21 +30,25 @@ class VLLMCompletionsTransport:
             "top_p": gen_kwargs.get("top_p", 0.9),
             "top_k": gen_kwargs.get("top_k", 40),
             "repetition_penalty": gen_kwargs.get("repetition_penalty", 1.1),
-            "stop_token_ids": [128258,128262]
+            "stop_token_ids": [END_OF_SPEECH]  # Stop at end of speech generation
         }
         
         # Use prompt_token_ids if we have a list, otherwise use prompt string
         if isinstance(prompt, list):
-            payload["prompt_token_ids"] = prompt
-            print(f"[DEBUG] Sending prompt_token_ids to vLLM: {len(prompt)} tokens")
-            print(f"[DEBUG] First 20 token IDs: {prompt[:20]}")
-            print(f"[DEBUG] Last 20 token IDs: {prompt[-20:]}")
+            # Decode token IDs to string (includes custom tokens like <custom_token_X>)
+            # vLLM will tokenize it back to the same IDs
+            tokenizer_model = os.getenv("TOKENIZER_MODEL", os.getenv("VLLM_MODEL", "kenpath/svara-tts-v1"))
+            tokenizer = get_or_load_tokenizer(tokenizer_model)
+            prompt_str = tokenizer.decode(prompt, skip_special_tokens=False)
+            payload["prompt"] = prompt_str
+            print(f"[DEBUG] Decoded {len(prompt)} token IDs to prompt string ({len(prompt_str)} chars)")
             print(f"[DEBUG] Token ID range: min={min(prompt)}, max={max(prompt)}")
+            print(f"[DEBUG] Prompt preview (first 200 chars): {prompt_str[:200]}")
         else:
             payload["prompt"] = prompt
             print(f"[DEBUG] Sending prompt string to vLLM: {len(prompt)} chars")
         
-        print(f"[DEBUG] vLLM payload: {json.dumps({k: v if k != 'prompt_token_ids' else f'<{len(v)} tokens>' if isinstance(v, list) else v for k, v in payload.items()}, indent=2)}")
+        print(f"[DEBUG] vLLM payload keys: {list(payload.keys())}")
 
         with requests.post(self.url, headers=self.headers, json=payload, stream=True) as resp:
             if resp.status_code != 200:
@@ -90,21 +97,25 @@ class VLLMCompletionsTransportAsync:
             "top_p": gen_kwargs.get("top_p", 0.9),
             "top_k": gen_kwargs.get("top_k", 40),
             "repetition_penalty": gen_kwargs.get("repetition_penalty", 1.1),
-            "stop_token_ids": [128258,128262]
+            "stop_token_ids": [END_OF_SPEECH]  # Stop at end of speech generation
         }
         
         # Use prompt_token_ids if we have a list, otherwise use prompt string
         if isinstance(prompt, list):
-            payload["prompt_token_ids"] = prompt
-            print(f"[DEBUG] Sending prompt_token_ids to vLLM: {len(prompt)} tokens")
-            print(f"[DEBUG] First 20 token IDs: {prompt[:20]}")
-            print(f"[DEBUG] Last 20 token IDs: {prompt[-20:]}")
+            # Decode token IDs to string (includes custom tokens like <custom_token_X>)
+            # vLLM will tokenize it back to the same IDs
+            tokenizer_model = os.getenv("TOKENIZER_MODEL", os.getenv("VLLM_MODEL", "kenpath/svara-tts-v1"))
+            tokenizer = get_or_load_tokenizer(tokenizer_model)
+            prompt_str = tokenizer.decode(prompt, skip_special_tokens=False)
+            payload["prompt"] = prompt_str
+            print(f"[DEBUG] Decoded {len(prompt)} token IDs to prompt string ({len(prompt_str)} chars)")
             print(f"[DEBUG] Token ID range: min={min(prompt)}, max={max(prompt)}")
+            print(f"[DEBUG] Prompt preview (first 200 chars): {prompt_str[:200]}")
         else:
             payload["prompt"] = prompt
             print(f"[DEBUG] Sending prompt string to vLLM: {len(prompt)} chars")
         
-        print(f"[DEBUG] vLLM payload: {json.dumps({k: v if k != 'prompt_token_ids' else f'<{len(v)} tokens>' if isinstance(v, list) else v for k, v in payload.items()}, indent=2)}")
+        print(f"[DEBUG] vLLM payload keys: {list(payload.keys())}")
 
         async with aiohttp.ClientSession() as sess:
             async with sess.post(self.url, headers=self.headers, json=payload) as resp:
