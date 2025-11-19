@@ -25,6 +25,7 @@ class VLLMCompletionsTransport:
             "max_tokens": gen_kwargs.get("max_tokens", 2048),
             "temperature": gen_kwargs.get("temperature", 0.75),
             "top_p": gen_kwargs.get("top_p", 0.9),
+            "top_k": gen_kwargs.get("top_k", 40),
             "repetition_penalty": gen_kwargs.get("repetition_penalty", 1.1),
             "stop_token_ids": [128258,128262]
         }
@@ -32,10 +33,20 @@ class VLLMCompletionsTransport:
         # Use prompt_token_ids if we have a list, otherwise use prompt string
         if isinstance(prompt, list):
             payload["prompt_token_ids"] = prompt
+            print(f"[DEBUG] Sending prompt_token_ids to vLLM: {len(prompt)} tokens")
+            print(f"[DEBUG] First 20 token IDs: {prompt[:20]}")
+            print(f"[DEBUG] Last 20 token IDs: {prompt[-20:]}")
+            print(f"[DEBUG] Token ID range: min={min(prompt)}, max={max(prompt)}")
         else:
             payload["prompt"] = prompt
+            print(f"[DEBUG] Sending prompt string to vLLM: {len(prompt)} chars")
+        
+        print(f"[DEBUG] vLLM payload: {json.dumps({k: v if k != 'prompt_token_ids' else f'<{len(v)} tokens>' if isinstance(v, list) else v for k, v in payload.items()}, indent=2)}")
 
         with requests.post(self.url, headers=self.headers, json=payload, stream=True) as resp:
+            if resp.status_code != 200:
+                error_text = resp.text
+                print(f"[ERROR] vLLM returned {resp.status_code}: {error_text}")
             resp.raise_for_status()
             for line in resp.iter_lines(decode_unicode=True):
                 if not line or not line.startswith("data: "):
@@ -77,6 +88,7 @@ class VLLMCompletionsTransportAsync:
             "max_tokens": gen_kwargs.get("max_tokens", 2048),
             "temperature": gen_kwargs.get("temperature", 0.75),
             "top_p": gen_kwargs.get("top_p", 0.9),
+            "top_k": gen_kwargs.get("top_k", 40),
             "repetition_penalty": gen_kwargs.get("repetition_penalty", 1.1),
             "stop_token_ids": [128258,128262]
         }
@@ -84,11 +96,21 @@ class VLLMCompletionsTransportAsync:
         # Use prompt_token_ids if we have a list, otherwise use prompt string
         if isinstance(prompt, list):
             payload["prompt_token_ids"] = prompt
+            print(f"[DEBUG] Sending prompt_token_ids to vLLM: {len(prompt)} tokens")
+            print(f"[DEBUG] First 20 token IDs: {prompt[:20]}")
+            print(f"[DEBUG] Last 20 token IDs: {prompt[-20:]}")
+            print(f"[DEBUG] Token ID range: min={min(prompt)}, max={max(prompt)}")
         else:
             payload["prompt"] = prompt
+            print(f"[DEBUG] Sending prompt string to vLLM: {len(prompt)} chars")
+        
+        print(f"[DEBUG] vLLM payload: {json.dumps({k: v if k != 'prompt_token_ids' else f'<{len(v)} tokens>' if isinstance(v, list) else v for k, v in payload.items()}, indent=2)}")
 
         async with aiohttp.ClientSession() as sess:
             async with sess.post(self.url, headers=self.headers, json=payload) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    print(f"[ERROR] vLLM returned {resp.status}: {error_text}")
                 resp.raise_for_status()
                 async for raw in resp.content:
                     line = raw.decode("utf-8", errors="ignore").strip()
