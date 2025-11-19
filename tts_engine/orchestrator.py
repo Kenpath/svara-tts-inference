@@ -6,7 +6,7 @@ import asyncio
 import logging
 from .transports import VLLMCompletionsTransport, VLLMCompletionsTransportAsync
 from .mapper import SvaraMapper, extract_custom_token_numbers
-from .snac_codec import SNACCodec
+from .codec import SNACCodec
 from .utils import svara_prompt, create_speaker_id
 from .buffers import AudioBuffer, SyncFuture
 from .timing import track_time

@@ -21,12 +21,11 @@ logger = logging.getLogger(__name__)
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from transformers import AutoTokenizer
 from tts_engine.voice_config import get_all_voices
 from tts_engine.orchestrator import SvaraTTSOrchestrator
 from tts_engine.timing import get_timing_stats, reset_timing_stats
 from tts_engine.utils import load_audio_from_bytes, svara_zero_shot_prompt, svara_prompt
-from tts_engine.snac_codec import SNACCodec
+from tts_engine.codec import SNACCodec, get_or_load_tokenizer
 from api.models import VoiceResponse, VoicesResponse, TTSRequest
 
 
@@ -36,11 +35,12 @@ from api.models import VoiceResponse, VoicesResponse, TTSRequest
 
 VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
 VLLM_MODEL = os.getenv("VLLM_MODEL", "kenpath/svara-tts-v1")
+TOKENIZER_MODEL = os.getenv("TOKENIZER_MODEL", VLLM_MODEL)  # Defaults to VLLM_MODEL
 TTS_DEVICE = os.getenv("TTS_DEVICE", None)  # None = auto-detect (CUDA/MPS/CPU)
+# HF_TOKEN is checked in codec.get_or_load_tokenizer() for private models
 
 # Global instances (initialized in lifespan)
 orchestrator: Optional[SvaraTTSOrchestrator] = None
-tokenizer = None  # For zero-shot voice cloning
 
 
 # ============================================================================
@@ -50,12 +50,14 @@ tokenizer = None  # For zero-shot voice cloning
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize and cleanup resources."""
-    global orchestrator, tokenizer
+    global orchestrator
     
     print(f"🚀 Initializing Svara TTS API...")
     print(f"   vLLM URL: {VLLM_BASE_URL}")
     print(f"   Model: {VLLM_MODEL}")
+    print(f"   Tokenizer Model: {TOKENIZER_MODEL}")
     print(f"   Device: {TTS_DEVICE or 'auto-detect'}")
+    print(f"   HF_TOKEN: {'set' if os.getenv('HF_TOKEN') else 'not set'}")
     
     # Initialize orchestrator with default settings
     # We'll create new instances per request with specific voice settings
@@ -69,13 +71,10 @@ async def lifespan(app: FastAPI):
         max_workers=2,
     )
     
-    # Load tokenizer for zero-shot voice cloning
-    print(f"📦 Loading tokenizer for {VLLM_MODEL}...")
-    tokenizer = AutoTokenizer.from_pretrained(VLLM_MODEL)
-    print(f"✓ Tokenizer loaded")
-    
+    # Note: Tokenizer is loaded on-demand and cached globally in codec.py
     print(f"✓ Orchestrator initialized")
     print(f"✓ Loaded {len(get_all_voices())} voices")
+    print(f"✓ Tokenizer will be lazy-loaded on first zero-shot request")
     
     yield
     
@@ -224,6 +223,9 @@ async def text_to_speech(
         logger.info(f"Audio tokens encoded to {len(audio_tokens)} tokens")
         logger.info(f"First 10 tokens: {audio_tokens[:10]}")
         logger.info(f"Last 10 tokens: {audio_tokens[-10:]}")
+        
+        # Get tokenizer from global cache
+        tokenizer = get_or_load_tokenizer(TOKENIZER_MODEL)
         
         # Build zero-shot prompt (returns token IDs directly)
         prompt = svara_zero_shot_prompt(

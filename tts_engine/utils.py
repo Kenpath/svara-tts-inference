@@ -6,20 +6,46 @@ from langcodes import Language
 import torch
 import torchaudio
 from io import BytesIO
+from .constants import (
+    # Numeric token IDs (for zero-shot prompt building)
+    START_OF_TEXT as START_OF_TEXT_ID,
+    END_OF_TEXT as END_OF_TEXT_ID,
+    EOT_ID as EOT_ID_NUM,
+    START_OF_SPEECH as START_OF_SPEECH_ID,
+    END_OF_SPEECH as END_OF_SPEECH_ID,
+    START_OF_HUMAN as START_OF_HUMAN_ID,
+    END_OF_HUMAN as END_OF_HUMAN_ID,
+    START_OF_AI as START_OF_AI_ID,
+    END_OF_AI as END_OF_AI_ID,
+    PAD_TOKEN as PAD_TOKEN_ID,
+    # String constants (for prompt formatting)
+    BEGIN_OF_TEXT_STR,
+    END_OF_TEXT_STR,
+    EOT_ID_STR,
+    AUDIO_STR,
+    START_OF_SPEECH_STR,
+    END_OF_SPEECH_STR,
+    START_OF_HUMAN_STR,
+    END_OF_HUMAN_STR,
+    START_OF_AI_STR,
+    END_OF_AI_STR,
+    PAD_TOKEN_STR,
+)
 
 logger = logging.getLogger(__name__)
 
-BEGIN_OF_TEXT   = "<|begin_of_text|>" # 128000
-END_OF_TEXT     = "<|end_of_text|>" # 128001
-AUDIO           = "<|audio|>" # 156939
-EOT_ID          = "<|eot_id|>" # 128009
-START_OF_SPEECH = "<custom_token_1>" # 128257
-END_OF_SPEECH   = "<custom_token_2>" # 128258
-START_OF_HUMAN  = "<custom_token_3>" # 128259
-END_OF_HUMAN    = "<custom_token_4>" # 128260
-START_OF_AI     = "<custom_token_5>" # 128261
-END_OF_AI       = "<custom_token_6>" # 128262
-PAD_TOKEN       = "<custom_token_7>" # 128263
+# String constants for prompt formatting (keep these as module-level variables for backward compatibility)
+BEGIN_OF_TEXT = BEGIN_OF_TEXT_STR
+END_OF_TEXT = END_OF_TEXT_STR
+AUDIO = AUDIO_STR
+EOT_ID = EOT_ID_STR
+START_OF_SPEECH = START_OF_SPEECH_STR
+END_OF_SPEECH = END_OF_SPEECH_STR
+START_OF_HUMAN = START_OF_HUMAN_STR
+END_OF_HUMAN = END_OF_HUMAN_STR
+START_OF_AI = START_OF_AI_STR
+END_OF_AI = END_OF_AI_STR
+PAD_TOKEN = PAD_TOKEN_STR
 
 
 _DEFAULT_SEPARATORS = [
@@ -81,23 +107,12 @@ def svara_zero_shot_prompt(
     Returns:
         List[int]: Token IDs ready for vLLM's prompt_token_ids parameter
     """
-    import torch
-    
-    # Token IDs for special tokens
-    START_OF_HUMAN_ID = 128259
-    EOT_ID = 128009
-    END_OF_HUMAN_ID = 128260
-    START_OF_AI_ID = 128261
-    START_OF_SPEECH_ID = 128257
-    END_OF_SPEECH_ID = 128258
-    END_OF_AI_ID = 128262
-    
     if tokenizer is None:
         raise ValueError("tokenizer is required for svara_zero_shot_prompt")
     
     # Build prompt as token IDs (matching notebook logic)
     start_tokens = torch.tensor([[START_OF_HUMAN_ID]], dtype=torch.int64)
-    end_tokens = torch.tensor([[EOT_ID, END_OF_HUMAN_ID, START_OF_AI_ID, START_OF_SPEECH_ID]], dtype=torch.int64)
+    end_tokens = torch.tensor([[EOT_ID_NUM, END_OF_HUMAN_ID, START_OF_AI_ID, START_OF_SPEECH_ID]], dtype=torch.int64)
     final_tokens = torch.tensor([[END_OF_SPEECH_ID, END_OF_AI_ID]], dtype=torch.int64)
     audio_tokens_tensor = torch.tensor([audio_tokens], dtype=torch.int64)
     

@@ -1,13 +1,20 @@
-# tts_engine/snac_codec.py
+# tts_engine/codec.py
 from snac import SNAC
 from typing import List, Optional
 import numpy as np
 import torch
+import os
+from transformers import AutoTokenizer
 from .utils import resample_audio
 from .timing import track_time
+from .constants import AUDIO_TOKEN_OFFSETS
+
 
 # Global model cache to avoid reloading SNAC model for each instance
 _SNAC_MODEL_CACHE: dict[str, SNAC] = {}
+
+# Global tokenizer cache to avoid reloading tokenizer for each request
+_TOKENIZER_CACHE: dict[str, AutoTokenizer] = {}
 
 
 def _get_or_load_snac_model(device: str, model_name: str = "hubertsiuzdak/snac_24khz") -> SNAC:
@@ -35,6 +42,39 @@ def _get_or_load_snac_model(device: str, model_name: str = "hubertsiuzdak/snac_2
         print(f"[DEBUG] Using cached SNAC model: {cache_key}")
     
     return _SNAC_MODEL_CACHE[cache_key]
+
+
+def get_or_load_tokenizer(model_name: str) -> AutoTokenizer:
+    """
+    Get cached tokenizer or load it if not cached.
+    
+    This prevents repeated tokenizer loading when processing multiple requests.
+    Automatically uses HF_TOKEN environment variable if available for private models.
+    
+    Args:
+        model_name: HuggingFace model identifier
+    
+    Returns:
+        Cached or newly loaded tokenizer
+    """
+    if model_name not in _TOKENIZER_CACHE:
+        print(f"[DEBUG] Loading tokenizer: {model_name}")
+        
+        # Check for HuggingFace token for private model access
+        hf_token = os.getenv("HF_TOKEN")
+        
+        if hf_token:
+            print(f"[DEBUG] Using HF_TOKEN for authentication")
+            tokenizer = AutoTokenizer.from_pretrained(model_name, token=hf_token)
+        else:
+            tokenizer = AutoTokenizer.from_pretrained(model_name)
+        
+        print(f"[DEBUG] Tokenizer loaded. Vocab size: {len(tokenizer)}")
+        _TOKENIZER_CACHE[model_name] = tokenizer
+    else:
+        print(f"[DEBUG] Using cached tokenizer: {model_name}")
+    
+    return _TOKENIZER_CACHE[model_name]
 
 
 class SNACCodec:
@@ -164,14 +204,14 @@ class SNACCodec:
             c6 = codes[2][0][4 * i + 3].item()
             
             if add_token_offsets:
-                # Add Svara-TTS vocabulary offsets
-                all_codes.append(c0 + 128266)
-                all_codes.append(c1 + 128266 + 4096)
-                all_codes.append(c2 + 128266 + (2 * 4096))
-                all_codes.append(c3 + 128266 + (3 * 4096))
-                all_codes.append(c4 + 128266 + (4 * 4096))
-                all_codes.append(c5 + 128266 + (5 * 4096))
-                all_codes.append(c6 + 128266 + (6 * 4096))
+                # Add Svara-TTS vocabulary offsets using constants
+                all_codes.append(c0 + AUDIO_TOKEN_OFFSETS[0])
+                all_codes.append(c1 + AUDIO_TOKEN_OFFSETS[1])
+                all_codes.append(c2 + AUDIO_TOKEN_OFFSETS[2])
+                all_codes.append(c3 + AUDIO_TOKEN_OFFSETS[3])
+                all_codes.append(c4 + AUDIO_TOKEN_OFFSETS[4])
+                all_codes.append(c5 + AUDIO_TOKEN_OFFSETS[5])
+                all_codes.append(c6 + AUDIO_TOKEN_OFFSETS[6])
             else:
                 # Raw SNAC codes
                 all_codes.extend([c0, c1, c2, c3, c4, c5, c6])
