@@ -1,9 +1,10 @@
+from __future__ import annotations
 import os
 import json
 from typing import Iterator, AsyncIterator, Optional, Dict, Any, Union, List
 import requests
 import aiohttp
-from __future__ import annotations
+
 from .timing import track_time
 from .constants import END_OF_SPEECH
 
