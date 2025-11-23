@@ -26,6 +26,7 @@ RUN apt-get update && apt-get install -y \
     wget \
     curl \
     libsndfile1 \
+    ffmpeg \
     supervisor \
     build-essential \
     && rm -rf /var/lib/apt/lists/*

@@ -9,8 +9,10 @@ import os
 import sys
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, AsyncGenerator
 from contextlib import asynccontextmanager
+import asyncio
+import subprocess
 
 from fastapi import FastAPI, HTTPException, Response, File, UploadFile, Form
 from fastapi.responses import StreamingResponse
@@ -94,6 +96,113 @@ app = FastAPI(
 
 
 # ============================================================================
+# Helpers
+# ============================================================================
+
+async def audio_stream_converter(
+    pcm_stream: AsyncGenerator[bytes, None],
+    format: str,
+    sample_rate: int = 24000,
+    channels: int = 1
+) -> AsyncGenerator[bytes, None]:
+    """
+    Convert PCM stream to target format using ffmpeg.
+    
+    Args:
+        pcm_stream: Async iterator yielding PCM bytes
+        format: Target format ('mp3', 'opus', 'aac', 'wav', 'pcm')
+        sample_rate: Input sample rate
+        channels: Input channels
+        
+    Yields:
+        Encoded audio bytes
+    """
+    if format == "pcm":
+        async for chunk in pcm_stream:
+            yield chunk
+        return
+
+    # Setup ffmpeg command
+    cmd = [
+        "ffmpeg",
+        "-f", "s16le",       # Input format: signed 16-bit little-endian
+        "-ar", str(sample_rate),
+        "-ac", str(channels),
+        "-i", "pipe:0",      # Read from stdin
+        "-loglevel", "error" # Suppress output
+    ]
+
+    # Format specific flags
+    if format == "mp3":
+        cmd.extend(["-f", "mp3", "pipe:1"])
+    elif format == "opus":
+        cmd.extend(["-f", "opus", "pipe:1"])
+    elif format == "aac":
+        cmd.extend(["-f", "adts", "pipe:1"]) # ADTS is streamable AAC container
+    elif format == "wav":
+        cmd.extend(["-f", "wav", "pipe:1"])
+    else:
+        # Fallback to PCM if unknown format
+        logger.warning(f"Unknown format '{format}', falling back to PCM")
+        async for chunk in pcm_stream:
+            yield chunk
+        return
+
+    # Start ffmpeg process
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+
+    async def write_stdin():
+        try:
+            async for chunk in pcm_stream:
+                if process.stdin:
+                    process.stdin.write(chunk)
+                    await process.stdin.drain()
+            if process.stdin:
+                process.stdin.close()
+        except Exception as e:
+            logger.error(f"Error writing to ffmpeg stdin: {e}")
+            try:
+                process.kill()
+            except:
+                pass
+
+    # Create task to write to stdin
+    write_task = asyncio.create_task(write_stdin())
+
+    # Read from stdout
+    try:
+        if process.stdout:
+            while True:
+                chunk = await process.stdout.read(4096)
+                if not chunk:
+                    break
+                yield chunk
+    except Exception as e:
+        logger.error(f"Error reading from ffmpeg stdout: {e}")
+        raise
+    finally:
+        # Ensure process is cleaned up
+        if not write_task.done():
+            write_task.cancel()
+            try:
+                await write_task
+            except asyncio.CancelledError:
+                pass
+        
+        if process.returncode is None:
+            try:
+                process.kill()
+            except:
+                pass
+            await process.wait()
+
+
+# ============================================================================
 # Endpoints
 # ============================================================================
 
@@ -133,6 +242,7 @@ async def text_to_speech(
     reference_transcript: Optional[str] = Form(None),
     model_id: str = Form(default="svara-tts-v1"),
     stream: bool = Form(default=True),
+    response_format: str = Form(default="opus"),  # Default to opus for streaming
     temperature: Optional[float] = Form(None),
     top_p: Optional[float] = Form(None),
     top_k: Optional[int] = Form(None),
@@ -153,7 +263,7 @@ async def text_to_speech(
     - Multipart form data (Content-Type: multipart/form-data) with file upload
     
     Returns:
-        Raw PCM16 audio bytes (streaming or complete)
+        Audio bytes in requested format (streaming or complete)
     """
     # Handle both JSON and multipart/form-data
     if json_body is not None:
@@ -164,6 +274,7 @@ async def text_to_speech(
         request_reference_transcript = json_body.reference_transcript
         request_model_id = json_body.model_id
         request_stream = json_body.stream
+        request_response_format = json_body.response_format
         request_temperature = json_body.temperature
         request_top_p = json_body.top_p
         request_top_k = json_body.top_k
@@ -178,6 +289,7 @@ async def text_to_speech(
         request_reference_transcript = reference_transcript
         request_model_id = model_id
         request_stream = stream
+        request_response_format = response_format
         request_temperature = temperature
         request_top_p = top_p
         request_top_k = top_k
@@ -196,14 +308,6 @@ async def text_to_speech(
             status_code=400,
             detail="Either 'voice' or 'reference_audio' must be provided"
         )
-    
-    # Currently only v1 is implemented
-    # TODO: Implement other models when svara-tts-v2 is released
-    # if request_model_id != "svara-tts-v1":
-    #     raise HTTPException(
-    #         status_code=501,
-    #         detail=f"Model '{request_model_id}' is not yet implemented. Currently only 'svara-tts-v1' is supported."
-    #     )
     
     # Determine mode: zero-shot or standard
     zero_shot_mode = request_reference_audio_bytes is not None
@@ -247,31 +351,39 @@ async def text_to_speech(
     if request_max_tokens is not None:
         gen_kwargs["max_tokens"] = request_max_tokens
     
+    # Map format to media type
+    format_media_types = {
+        "mp3": "audio/mpeg",
+        "opus": "audio/ogg",
+        "aac": "audio/aac",
+        "wav": "audio/wav",
+        "pcm": "audio/pcm",
+    }
+    media_type = format_media_types.get(request_response_format, "audio/pcm")
+    
+    # Create async generator for raw PCM
+    pcm_generator = request_orchestrator.astream(
+        text=request_text,
+        audio_reference=audio_tokens,
+        reference_text=request_reference_transcript,
+        speaker_id=request_voice,
+        **gen_kwargs
+    )
+    
+    # Convert to requested format
+    audio_stream = audio_stream_converter(
+        pcm_generator,
+        format=request_response_format,
+    )
+    
     # Handle streaming vs non-streaming
     if request_stream:
-        # Streaming response
-        async def audio_stream():
-            """Stream audio chunks as they're generated."""
-            try:
-                async for chunk in request_orchestrator.astream(
-                    text=request_text,
-                    audio_reference=audio_tokens,
-                    reference_text=request_reference_transcript,
-                    speaker_id=request_voice,
-                    **gen_kwargs
-                ):
-                    yield chunk
-            except Exception as e:
-                print(f"Error during streaming: {e}")
-                raise
-        
         return StreamingResponse(
-            audio_stream(),
-            media_type="audio/pcm",
+            audio_stream,
+            media_type=media_type,
             headers={
-                "Content-Type": "audio/pcm",
+                "Content-Type": media_type,
                 "X-Sample-Rate": "24000",
-                "X-Bit-Depth": "16",
                 "X-Channels": "1",
             }
         )
@@ -279,24 +391,17 @@ async def text_to_speech(
         # Non-streaming: collect all audio chunks
         try:
             audio_chunks = []
-            async for chunk in request_orchestrator.astream(
-                text=request_text,
-                audio_reference=audio_tokens,
-                reference_text=request_reference_transcript,
-                speaker_id=request_voice,
-                **gen_kwargs
-            ):
+            async for chunk in audio_stream:
                 audio_chunks.append(chunk)
             
             complete_audio = b"".join(audio_chunks)
             
             return Response(
                 content=complete_audio,
-                media_type="audio/pcm",
+                media_type=media_type,
                 headers={
-                    "Content-Type": "audio/pcm",
+                    "Content-Type": media_type,
                     "X-Sample-Rate": "24000",
-                    "X-Bit-Depth": "16",
                     "X-Channels": "1",
                     "Content-Length": str(len(complete_audio)),
                 }
@@ -379,4 +484,3 @@ if __name__ == "__main__":
         reload=False,
         log_level="info",
     )
-

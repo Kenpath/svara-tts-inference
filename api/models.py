@@ -47,6 +47,7 @@ class TTSRequest(BaseModel):
     reference_transcript: Optional[str] = Field(None, description="Optional transcript of the reference audio. Providing this improves voice cloning quality. Only used when reference_audio is provided.")
     
     # Generation parameters (optional)
+    response_format: str = Field(default="opus", description="Audio format for response. Options: 'opus' (default), 'mp3', 'aac', 'wav', 'pcm'")
     temperature: Optional[float] = Field(None, ge=0.0, le=2.0, description="Sampling temperature (default: 0.75)")
     top_p: Optional[float] = Field(None, ge=0.0, le=1.0, description="Nucleus sampling probability (default: 0.9)")
     top_k: Optional[int] = Field(None, ge=-1, description="Top-k sampling (default: -1, disabled)")

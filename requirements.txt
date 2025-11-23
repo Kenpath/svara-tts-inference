@@ -12,3 +12,4 @@ flashinfer-python>=0.2.3
 requests
 hf-transfer  # Optional: faster HuggingFace downloads
 pyyaml
+torchcodec
