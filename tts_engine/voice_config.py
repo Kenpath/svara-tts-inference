@@ -5,6 +5,8 @@ Manages voice profiles across different models with extensible structure
 for future custom voice profiles.
 """
 from __future__ import annotations
+import os
+import yaml
 from typing import List, Dict, Optional, Literal
 from dataclasses import dataclass, asdict
 
@@ -13,100 +15,59 @@ class Voice:
     """Voice profile with metadata."""
     voice_id: str
     name: str
-    language_code: str
     model_id: str
+    languages: List[str]
     gender: Optional[Literal["male", "female"]] = None
     description: Optional[str] = None
     
+    @property
+    def language_code(self) -> str:
+        """
+        Get the primary language code.
+        Maintained for backward compatibility.
+        """
+        if self.languages:
+            return self.languages[0]
+        raise ValueError(f"Voice {self.voice_id} has no languages defined")
+
     def to_dict(self) -> Dict:
         """Convert to dictionary for API responses."""
-        return {k: v for k, v in asdict(self).items() if v is not None}
+        data = {k: v for k, v in asdict(self).items() if v is not None}
+        # Add language_code for backward compatibility in API response
+        if self.languages:
+            data['language_code'] = self.languages[0]
+        return data
 
 
-# Supported languages for svara-tts-v1
-SVARA_V1_LANGUAGES = [
-    ("hi", "Hindi"),
-    ("bn", "Bengali"),
-    ("mr", "Marathi"),
-    ("te", "Telugu"),
-    ("kn", "Kannada"),
-    ("bh", "Bhojpuri"),
-    ("mag", "Magahi"),
-    ("hne", "Chhattisgarhi"),
-    ("mai", "Maithili"),
-    ("as", "Assamese"),
-    ("brx", "Bodo"),
-    ("doi", "Dogri"),
-    ("gu", "Gujarati"),
-    ("ml", "Malayalam"),
-    ("pa", "Punjabi"),
-    ("ta", "Tamil"),
-    ("en", "English (Indian)"),
-    ("ne", "Nepali"),
-    ("sa", "Sanskrit"),
-]
+def load_voices_from_yaml(path: str) -> List[Voice]:
+    """Load voices from a YAML file."""
+    if not os.path.exists(path):
+        # Return empty list if file not found to allow partial setup
+        # Log warning in production
+        print(f"Warning: Voice config file not found at {path}")
+        return []
+        
+    with open(path, 'r') as f:
+        data = yaml.safe_load(f)
+        
+    voices = []
+    if data:
+        for item in data:
+            voices.append(Voice(**item))
+    return voices
 
-# Generate svara-tts-v1 voices (19 languages × 2 genders = 38 voices)
-SVARA_V1_VOICES: List[Voice] = []
-for lang_code, lang_name in SVARA_V1_LANGUAGES:
-    for gender in ["male", "female"]:
-        voice_id = f"{lang_code}_{gender}"
-        SVARA_V1_VOICES.append(
-            Voice(
-                voice_id=voice_id,
-                name=f"{lang_name} ({gender.capitalize()})",
-                language_code=lang_code,
-                model_id="svara-tts-v1",
-                gender=gender,
-                description=f"{lang_name} voice with {gender} characteristics"
-            )
-        )
 
-# Placeholder voices for svara-tts-v2 (custom voice profiles)
-SVARA_V2_VOICES: List[Voice] = [
-    Voice(
-        voice_id="rohit",
-        name="Rohit",
-        language_code="hi",
-        model_id="svara-tts-v2",
-        description="Deep, professional male voice"
-    ),
-    Voice(
-        voice_id="priya",
-        name="Priya",
-        language_code="hi",
-        model_id="svara-tts-v2",
-        description="Warm, friendly female voice"
-    ),
-    Voice(
-        voice_id="arjun",
-        name="Arjun",
-        language_code="en",
-        model_id="svara-tts-v2",
-        description="Energetic, youthful male voice"
-    ),
-    Voice(
-        voice_id="ananya",
-        name="Ananya",
-        language_code="en",
-        model_id="svara-tts-v2",
-        description="Clear, articulate female voice"
-    ),
-    Voice(
-        voice_id="vikram",
-        name="Vikram",
-        language_code="hi",
-        model_id="svara-tts-v2",
-        description="Authoritative, confident male voice"
-    ),
-    Voice(
-        voice_id="kavya",
-        name="Kavya",
-        language_code="hi",
-        model_id="svara-tts-v2",
-        description="Gentle, soothing female voice"
-    ),
-]
+# Paths
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VOICES_DIR = os.path.join(BASE_DIR, "assets", "voices")
+V1_YAML_PATH = os.path.join(VOICES_DIR, "svara-tts-v1.yaml")
+V2_YAML_PATH = os.path.join(VOICES_DIR, "svara-tts-v2.yaml")
+
+# Load svara-tts-v1 voices from YAML
+SVARA_V1_VOICES: List[Voice] = load_voices_from_yaml(V1_YAML_PATH)
+
+# Load svara-tts-v2 voices from YAML
+SVARA_V2_VOICES: List[Voice] = load_voices_from_yaml(V2_YAML_PATH)
 
 # Combined voice registry
 ALL_VOICES: List[Voice] = SVARA_V1_VOICES + SVARA_V2_VOICES
@@ -194,7 +155,6 @@ def get_speaker_id(voice_id: str) -> str:
             raise ValueError(f"Voice '{voice_id}' does not have gender information")
         return create_speaker_id(voice.language_code, voice.gender)
     
-    # For v2 and future voices, use the voice_id directly as speaker ID
-    # This allows custom voice profiles
-    return voice.voice_id
-
+    # For v2 and future voices, use the name directly (capitalized as in the YAML)
+    # The name field in the voice object matches the key in the model's speaker list
+    return voice.name

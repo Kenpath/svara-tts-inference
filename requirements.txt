@@ -11,3 +11,4 @@ aiohttp>=3.9.0
 flashinfer-python>=0.2.3
 requests
 hf-transfer  # Optional: faster HuggingFace downloads
+pyyaml

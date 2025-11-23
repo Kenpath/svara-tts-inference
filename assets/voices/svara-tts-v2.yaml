@@ -1,0 +1,319 @@
+- voice_id: aaradhya
+  name: Aaradhya
+  model_id: svara-tts-v2
+  gender: female
+  languages: &id001
+  - hi
+  - bn
+  - mr
+  - te
+  - kn
+  - bh
+  - mag
+  - hne
+  - mai
+  - as
+  - brx
+  - doi
+  - gu
+  - ml
+  - pa
+  - ta
+  - en
+  - ne
+  - sa
+  description: Aaradhya voice (Female)
+- voice_id: abhiram
+  name: Abhiram
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Abhiram voice (Male)
+- voice_id: aditya
+  name: Aditya
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Aditya voice (Male)
+- voice_id: akshat
+  name: Akshat
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Akshat voice (Male)
+- voice_id: akshay
+  name: Akshay
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Akshay voice (Male)
+- voice_id: ananya
+  name: Ananya
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Ananya voice (Female)
+- voice_id: anika
+  name: Anika
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Anika voice (Female)
+- voice_id: anirudh
+  name: Anirudh
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Anirudh voice (Male)
+- voice_id: anjali
+  name: Anjali
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Anjali voice (Female)
+- voice_id: ayesha
+  name: Ayesha
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Ayesha voice (Female)
+- voice_id: bunty
+  name: Bunty
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Bunty voice (Male)
+- voice_id: chanchal
+  name: Chanchal
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Chanchal voice (Female)
+- voice_id: danish
+  name: Danish
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Danish voice (Male)
+- voice_id: digpal
+  name: Digpal
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Digpal voice (Male)
+- voice_id: hansika
+  name: Hansika
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Hansika voice (Female)
+- voice_id: kanika
+  name: Kanika
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Kanika voice (Female)
+- voice_id: karan
+  name: Karan
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Karan voice (Male)
+- voice_id: karthik
+  name: Karthik
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Karthik voice (Male)
+- voice_id: kishan
+  name: Kishan
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Kishan voice (Male)
+- voice_id: likhitha
+  name: Likhitha
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Likhitha voice (Female)
+- voice_id: madhu
+  name: Madhu
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Madhu voice (Female)
+- voice_id: maheshwari
+  name: Maheshwari
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Maheshwari voice (Female)
+- voice_id: manav
+  name: Manav
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Manav voice (Male)
+- voice_id: monica
+  name: Monica
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Monica voice (Female)
+- voice_id: mumtaz
+  name: Mumtaz
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Mumtaz voice (Female)
+- voice_id: prakash
+  name: Prakash
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Prakash voice (Male)
+- voice_id: priya
+  name: Priya
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Priya voice (Female)
+- voice_id: rahul
+  name: Rahul
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Rahul voice (Male)
+- voice_id: rajesh
+  name: Rajesh
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Rajesh voice (Male)
+- voice_id: ranbir
+  name: Ranbir
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Ranbir voice (Male)
+- voice_id: riya
+  name: Riya
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Riya voice (Female)
+- voice_id: sagar
+  name: Sagar
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Sagar voice (Male)
+- voice_id: samisha
+  name: Samisha
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Samisha voice (Female)
+- voice_id: sapna
+  name: Sapna
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Sapna voice (Female)
+- voice_id: shalini
+  name: Shalini
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Shalini voice (Female)
+- voice_id: shashank
+  name: Shashank
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Shashank voice (Male)
+- voice_id: shivam
+  name: Shivam
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Shivam voice (Male)
+- voice_id: shivani
+  name: Shivani
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Shivani voice (Female)
+- voice_id: siddharth
+  name: Siddharth
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Siddharth voice (Male)
+- voice_id: simran
+  name: Simran
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Simran voice (Female)
+- voice_id: smrithi
+  name: Smrithi
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Smrithi voice (Female)
+- voice_id: sneha
+  name: Sneha
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Sneha voice (Female)
+- voice_id: tanvi
+  name: Tanvi
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Tanvi voice (Female)
+- voice_id: tanya
+  name: Tanya
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Tanya voice (Female)
+- voice_id: tripti
+  name: Tripti
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Tripti voice (Female)
+- voice_id: vasanth
+  name: Vasanth
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Vasanth voice (Male)
+- voice_id: vidya
+  name: Vidya
+  model_id: svara-tts-v2
+  gender: female
+  languages: *id001
+  description: Vidya voice (Female)
+- voice_id: viraj
+  name: Viraj
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Viraj voice (Male)
+- voice_id: vishal
+  name: Vishal
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Vishal voice (Male)
+- voice_id: yash
+  name: Yash
+  model_id: svara-tts-v2
+  gender: male
+  languages: *id001
+  description: Yash voice (Male)

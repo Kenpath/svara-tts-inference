@@ -13,7 +13,6 @@ class VoiceResponse(BaseModel):
     """Voice metadata response."""
     voice_id: str
     name: str
-    language_code: str
     model_id: str
     gender: Optional[str] = None
     description: Optional[str] = None

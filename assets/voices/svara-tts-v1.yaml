@@ -1,0 +1,267 @@
+- voice_id: hi_male
+  name: Hindi (Male)
+  model_id: svara-tts-v1
+  gender: male
+  languages:
+  - hi
+  description: Hindi voice with male characteristics
+- voice_id: hi_female
+  name: Hindi (Female)
+  model_id: svara-tts-v1
+  gender: female
+  languages:
+  - hi
+  description: Hindi voice with female characteristics
+- voice_id: bn_male
+  name: Bengali (Male)
+  model_id: svara-tts-v1
+  gender: male
+  languages:
+  - bn
+  description: Bengali voice with male characteristics
+- voice_id: bn_female
+  name: Bengali (Female)
+  model_id: svara-tts-v1
+  gender: female
+  languages:
+  - bn
+  description: Bengali voice with female characteristics
+- voice_id: mr_male
+  name: Marathi (Male)
+  model_id: svara-tts-v1
+  gender: male
+  languages:
+  - mr
+  description: Marathi voice with male characteristics
+- voice_id: mr_female
+  name: Marathi (Female)
+  model_id: svara-tts-v1
+  gender: female
+  languages:
+  - mr
+  description: Marathi voice with female characteristics
+- voice_id: te_male
+  name: Telugu (Male)
+  model_id: svara-tts-v1
+  gender: male
+  languages:
+  - te
+  description: Telugu voice with male characteristics
+- voice_id: te_female
+  name: Telugu (Female)
+  model_id: svara-tts-v1
+  gender: female
+  languages:
+  - te
+  description: Telugu voice with female characteristics
+- voice_id: kn_male
+  name: Kannada (Male)
+  model_id: svara-tts-v1
+  gender: male
+  languages:
+  - kn
+  description: Kannada voice with male characteristics
+- voice_id: kn_female
+  name: Kannada (Female)
+  model_id: svara-tts-v1
+  gender: female
+  languages:
+  - kn
+  description: Kannada voice with female characteristics
+- voice_id: bh_male
+  name: Bhojpuri (Male)
+  model_id: svara-tts-v1
+  gender: male
+  languages:
+  - bh
+  description: Bhojpuri voice with male characteristics
+- voice_id: bh_female
+  name: Bhojpuri (Female)
+  model_id: svara-tts-v1
+  gender: female
+  languages:
+  - bh
+  description: Bhojpuri voice with female characteristics
+- voice_id: mag_male
+  name: Magahi (Male)
+  model_id: svara-tts-v1
+  gender: male
+  languages:
+  - mag
+  description: Magahi voice with male characteristics
+- voice_id: mag_female
+  name: Magahi (Female)
+  model_id: svara-tts-v1
+  gender: female
+  languages:
+  - mag
+  description: Magahi voice with female characteristics
+- voice_id: hne_male
+  name: Chhattisgarhi (Male)
+  model_id: svara-tts-v1
+  gender: male
+  languages:
+  - hne
+  description: Chhattisgarhi voice with male characteristics
+- voice_id: hne_female
+  name: Chhattisgarhi (Female)
+  model_id: svara-tts-v1
+  gender: female
+  languages:
+  - hne
+  description: Chhattisgarhi voice with female characteristics
+- voice_id: mai_male
+  name: Maithili (Male)
+  model_id: svara-tts-v1
+  gender: male
+  languages:
+  - mai
+  description: Maithili voice with male characteristics
+- voice_id: mai_female
+  name: Maithili (Female)
+  model_id: svara-tts-v1
+  gender: female
+  languages:
+  - mai
+  description: Maithili voice with female characteristics
+- voice_id: as_male
+  name: Assamese (Male)
+  model_id: svara-tts-v1
+  gender: male
+  languages:
+  - as
+  description: Assamese voice with male characteristics
+- voice_id: as_female
+  name: Assamese (Female)
+  model_id: svara-tts-v1
+  gender: female
+  languages:
+  - as
+  description: Assamese voice with female characteristics
+- voice_id: brx_male
+  name: Bodo (Male)
+  model_id: svara-tts-v1
+  gender: male
+  languages:
+  - brx
+  description: Bodo voice with male characteristics
+- voice_id: brx_female
+  name: Bodo (Female)
+  model_id: svara-tts-v1
+  gender: female
+  languages:
+  - brx
+  description: Bodo voice with female characteristics
+- voice_id: doi_male
+  name: Dogri (Male)
+  model_id: svara-tts-v1
+  gender: male
+  languages:
+  - doi
+  description: Dogri voice with male characteristics
+- voice_id: doi_female
+  name: Dogri (Female)
+  model_id: svara-tts-v1
+  gender: female
+  languages:
+  - doi
+  description: Dogri voice with female characteristics
+- voice_id: gu_male
+  name: Gujarati (Male)
+  model_id: svara-tts-v1
+  gender: male
+  languages:
+  - gu
+  description: Gujarati voice with male characteristics
+- voice_id: gu_female
+  name: Gujarati (Female)
+  model_id: svara-tts-v1
+  gender: female
+  languages:
+  - gu
+  description: Gujarati voice with female characteristics
+- voice_id: ml_male
+  name: Malayalam (Male)
+  model_id: svara-tts-v1
+  gender: male
+  languages:
+  - ml
+  description: Malayalam voice with male characteristics
+- voice_id: ml_female
+  name: Malayalam (Female)
+  model_id: svara-tts-v1
+  gender: female
+  languages:
+  - ml
+  description: Malayalam voice with female characteristics
+- voice_id: pa_male
+  name: Punjabi (Male)
+  model_id: svara-tts-v1
+  gender: male
+  languages:
+  - pa
+  description: Punjabi voice with male characteristics
+- voice_id: pa_female
+  name: Punjabi (Female)
+  model_id: svara-tts-v1
+  gender: female
+  languages:
+  - pa
+  description: Punjabi voice with female characteristics
+- voice_id: ta_male
+  name: Tamil (Male)
+  model_id: svara-tts-v1
+  gender: male
+  languages:
+  - ta
+  description: Tamil voice with male characteristics
+- voice_id: ta_female
+  name: Tamil (Female)
+  model_id: svara-tts-v1
+  gender: female
+  languages:
+  - ta
+  description: Tamil voice with female characteristics
+- voice_id: en_male
+  name: English (Indian) (Male)
+  model_id: svara-tts-v1
+  gender: male
+  languages:
+  - en
+  description: English (Indian) voice with male characteristics
+- voice_id: en_female
+  name: English (Indian) (Female)
+  model_id: svara-tts-v1
+  gender: female
+  languages:
+  - en
+  description: English (Indian) voice with female characteristics
+- voice_id: ne_male
+  name: Nepali (Male)
+  model_id: svara-tts-v1
+  gender: male
+  languages:
+  - ne
+  description: Nepali voice with male characteristics
+- voice_id: ne_female
+  name: Nepali (Female)
+  model_id: svara-tts-v1
+  gender: female
+  languages:
+  - ne
+  description: Nepali voice with female characteristics
+- voice_id: sa_male
+  name: Sanskrit (Male)
+  model_id: svara-tts-v1
+  gender: male
+  languages:
+  - sa
+  description: Sanskrit voice with male characteristics
+- voice_id: sa_female
+  name: Sanskrit (Female)
+  model_id: svara-tts-v1
+  gender: female
+  languages:
+  - sa
+  description: Sanskrit voice with female characteristics
+
