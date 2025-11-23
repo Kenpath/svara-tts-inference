@@ -6,46 +6,9 @@ from langcodes import Language
 import torch
 import torchaudio
 from io import BytesIO
-from .constants import (
-    # Numeric token IDs (for zero-shot prompt building)
-    START_OF_TEXT as START_OF_TEXT_ID,
-    END_OF_TEXT as END_OF_TEXT_ID,
-    EOT_ID as EOT_ID_NUM,
-    START_OF_SPEECH as START_OF_SPEECH_ID,
-    END_OF_SPEECH as END_OF_SPEECH_ID,
-    START_OF_HUMAN as START_OF_HUMAN_ID,
-    END_OF_HUMAN as END_OF_HUMAN_ID,
-    START_OF_AI as START_OF_AI_ID,
-    END_OF_AI as END_OF_AI_ID,
-    PAD_TOKEN as PAD_TOKEN_ID,
-    # String constants (for prompt formatting)
-    BEGIN_OF_TEXT_STR,
-    END_OF_TEXT_STR,
-    EOT_ID_STR,
-    AUDIO_STR,
-    START_OF_SPEECH_STR,
-    END_OF_SPEECH_STR,
-    START_OF_HUMAN_STR,
-    END_OF_HUMAN_STR,
-    START_OF_AI_STR,
-    END_OF_AI_STR,
-    PAD_TOKEN_STR,
-)
 
 logger = logging.getLogger(__name__)
 
-# String constants for prompt formatting (keep these as module-level variables for backward compatibility)
-BEGIN_OF_TEXT = BEGIN_OF_TEXT_STR
-END_OF_TEXT = END_OF_TEXT_STR
-AUDIO = AUDIO_STR
-EOT_ID = EOT_ID_STR
-START_OF_SPEECH = START_OF_SPEECH_STR
-END_OF_SPEECH = END_OF_SPEECH_STR
-START_OF_HUMAN = START_OF_HUMAN_STR
-END_OF_HUMAN = END_OF_HUMAN_STR
-START_OF_AI = START_OF_AI_STR
-END_OF_AI = END_OF_AI_STR
-PAD_TOKEN = PAD_TOKEN_STR
 
 
 _DEFAULT_SEPARATORS = [
@@ -57,19 +20,6 @@ _DEFAULT_SEPARATORS = [
     " ",      # space (preferred over comma)
     "",       # hard fallback (character-level)
 ]
-
-
-
-def svara_prompt(text: str, speaker_id: str) -> str:
-    """Format the prompt for the Svara-TTS model.
-    
-    Args:
-        text: The text to synthesize.
-        speaker_id: The speaker identifier in "Language (Gender)" format (e.g., "Hindi (Male)").
-    """
-    prompt = f"{START_OF_HUMAN}{AUDIO} {speaker_id}: {text}{EOT_ID}{END_OF_HUMAN}{START_OF_AI}"
-    print(f"Prompt: {prompt}")
-    return prompt
 
 
 def create_speaker_id(lang_code: str, gender: Literal["male", "female"]) -> str:
@@ -85,65 +35,6 @@ def create_speaker_id(lang_code: str, gender: Literal["male", "female"]) -> str:
     """
     language = Language.get(lang_code).display_name()
     return f"{language} ({gender.capitalize()})"
-
-
-def svara_zero_shot_prompt(
-    text: str, 
-    audio_tokens: List[int], 
-    transcript: Optional[str] = None,
-    tokenizer = None
-) -> Union[str, List[int]]:
-    """
-    Format the zero-shot voice cloning prompt for the Svara-TTS model.
-    
-    Returns token IDs (list of ints) when tokenizer provided, for efficient vLLM usage.
-    
-    Args:
-        text: The target text to synthesize.
-        audio_tokens: SNAC token sequence from the reference audio (WITH offsets: 128266+).
-        transcript: Optional transcript of the reference audio.
-        tokenizer: The model's tokenizer (required for token ID output).
-    
-    Returns:
-        List[int]: Token IDs ready for vLLM's prompt_token_ids parameter
-    """
-    if tokenizer is None:
-        raise ValueError("tokenizer is required for svara_zero_shot_prompt")
-    
-    # Build prompt as token IDs (matching notebook logic)
-    start_tokens = torch.tensor([[START_OF_HUMAN_ID]], dtype=torch.int64)
-    end_tokens = torch.tensor([[EOT_ID_NUM, END_OF_HUMAN_ID, START_OF_AI_ID, START_OF_SPEECH_ID]], dtype=torch.int64)
-    final_tokens = torch.tensor([[END_OF_SPEECH_ID, END_OF_AI_ID]], dtype=torch.int64)
-    audio_tokens_tensor = torch.tensor([audio_tokens], dtype=torch.int64)
-    
-    if transcript and transcript.strip():
-        # WITH TRANSCRIPT: <start_human> transcript_tokens <eot> <end_human> <start_ai> <start_speech> audio_tokens <end_speech> <end_ai>
-        transcript_tokens = tokenizer(transcript, return_tensors="pt").input_ids
-        zeroprompt_input_ids = torch.cat([
-            start_tokens,
-            transcript_tokens,
-            end_tokens,
-            audio_tokens_tensor,
-            final_tokens
-        ], dim=1)
-    else:
-        # WITHOUT TRANSCRIPT: audio_tokens <end_speech> <end_ai>
-        zeroprompt_input_ids = torch.cat([
-            audio_tokens_tensor,
-            final_tokens
-        ], dim=1)
-    
-    # Add target text: <start_human> text_tokens <eot> <end_human> <start_ai> <start_speech>
-    target_tokens = tokenizer(text, return_tensors="pt").input_ids
-    full_input_ids = torch.cat([
-        zeroprompt_input_ids,
-        start_tokens,
-        target_tokens,
-        end_tokens
-    ], dim=1)
-    
-    # Return as list of token IDs
-    return full_input_ids.flatten().tolist()
 
 
 def _split_text_recursive(

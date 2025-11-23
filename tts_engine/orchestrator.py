@@ -1,4 +1,5 @@
 
+import os
 from __future__ import annotations
 from typing import Iterator, AsyncIterator, List, Optional, Literal, Union
 import concurrent.futures
@@ -6,8 +7,9 @@ import asyncio
 import logging
 from .transports import VLLMCompletionsTransport, VLLMCompletionsTransportAsync
 from .mapper import SvaraMapper, extract_custom_token_numbers
-from .codec import SNACCodec
-from .utils import svara_prompt, create_speaker_id
+from .codec import SNACCodec, get_or_load_tokenizer
+from .encoder import svara_text_to_tokens
+from .utils import create_speaker_id
 from .buffers import AudioBuffer, SyncFuture
 from .timing import track_time
 
@@ -47,6 +49,10 @@ class SvaraTTSOrchestrator:
             self.speaker_id = create_speaker_id(lang_code, gender)
         else:
             self.speaker_id = speaker_id
+
+        self.model_name = model
+        self.tokenizer_model = os.getenv("TOKENIZER_MODEL", os.getenv("VLLM_MODEL", "kenpath/svara-tts-v1"))            
+        self.tokenizer      = get_or_load_tokenizer(self.tokenizer_model)       
         
         self.transport      = VLLMCompletionsTransport(base_url, model, headers)
         self.transport_async = None  # lazy
@@ -57,30 +63,44 @@ class SvaraTTSOrchestrator:
         self.max_workers    = max_workers
         
     # ------------ SYNC path ------------
-    def stream(self, text: str, prompt: Optional[Union[str, List[int]]] = None, **gen_kwargs) -> Iterator[bytes]:
+    def stream(self, 
+               text: str, 
+               audio_reference: Optional[List[int]] = None,
+               reference_text: Optional[str] = None,
+               speaker_id: Optional[str] = None,
+               **gen_kwargs) -> Iterator[bytes]:
         """Stream the TTS output.
         
         Args:
             text: The text to synthesize.
-            prompt: Optional pre-computed prompt. Can be a string or list of token IDs.
-                   If None, builds prompt from text and speaker_id.
+            audio_reference: Optional SNAC tokens for zero-shot voice cloning.
+            reference_text: Optional transcript for the reference audio.
+            speaker_id: Optional speaker ID to override the default.
             gen_kwargs: Additional keyword arguments to pass to the transport.
         """
-        yield from self._stream_one(text, prompt=prompt, **gen_kwargs)
+        yield from self._stream_one(text, audio_reference=audio_reference, reference_text=reference_text, speaker_id=speaker_id, **gen_kwargs)
 
     @track_time("Orchestrator.stream_one")
-    def _stream_one(self, text: str, prompt: Optional[Union[str, List[int]]] = None, **gen_kwargs) -> Iterator[bytes]:
-        # Use provided prompt or build from text + speaker_id
-        if prompt is None:
-            prompt = svara_prompt(text, self.speaker_id)
+    def _stream_one(self, 
+                    text: str, 
+                    audio_reference: Optional[List[int]] = None,
+                    reference_text: Optional[str] = None,
+                    speaker_id: Optional[str] = None,
+                    **gen_kwargs) -> Iterator[bytes]:
+        
+        # Generate prompt using svara_text_to_tokens
+        prompt = svara_text_to_tokens(
+            text=text,
+            speaker_id=speaker_id or self.speaker_id,
+            audio_tokens=audio_reference,
+            transcript=reference_text,
+            tokenizer=self.tokenizer,
+            return_decoded=True
+        )
         
         # Log prompt details
-        if isinstance(prompt, list):
-            logger.info(f"Final prompt before inference: {len(prompt)} token IDs")
-            logger.debug(f"Token IDs (first 50): {prompt[:50]}")
-        else:
-            logger.info(f"Final prompt before tokenization: {len(prompt)} chars")
-            logger.debug(f"Full prompt: {prompt}")
+        logger.info(f"Final prompt before inference: {len(prompt)} chars")
+        logger.debug(f"Full prompt: {prompt}")
         
         audio_buf = AudioBuffer(self.prebuffer_samples)
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) if self.concurrent_decode else None
@@ -115,13 +135,19 @@ class SvaraTTSOrchestrator:
                 executor.shutdown(wait=True)
 
     # ------------ ASYNC path ------------
-    async def astream(self, text: str, prompt: Optional[Union[str, List[int]]] = None, **gen_kwargs) -> AsyncIterator[bytes]:
+    async def astream(self, 
+                      text: str, 
+                      audio_reference: Optional[List[int]] = None,
+                      reference_text: Optional[str] = None,
+                      speaker_id: Optional[str] = None,
+                      **gen_kwargs) -> AsyncIterator[bytes]:
         """Async stream the TTS output.
         
         Args:
             text: The text to synthesize.
-            prompt: Optional pre-computed prompt. Can be a string or list of token IDs.
-                   If None, builds prompt from text and speaker_id.
+            audio_reference: Optional SNAC tokens for zero-shot voice cloning.
+            reference_text: Optional transcript for the reference audio.
+            speaker_id: Optional speaker ID to override the default.
             gen_kwargs: Additional keyword arguments to pass to the transport.
         """
         if self.transport_async is None:
@@ -130,22 +156,29 @@ class SvaraTTSOrchestrator:
                 base_url, self.transport.model, self.transport.headers
             )
         
-        async for b in self._astream_one(text, prompt=prompt, **gen_kwargs):
+        async for b in self._astream_one(text, audio_reference=audio_reference, reference_text=reference_text, speaker_id=speaker_id, **gen_kwargs):
             yield b
 
     @track_time("Orchestrator.astream_one")
-    async def _astream_one(self, text: str, prompt: Optional[Union[str, List[int]]] = None, **gen_kwargs) -> AsyncIterator[bytes]:
-        # Use provided prompt or build from text + speaker_id
-        if prompt is None:
-            prompt = svara_prompt(text, self.speaker_id)
+    async def _astream_one(self, 
+                           text: str, 
+                           audio_reference: Optional[List[int]] = None,
+                           reference_text: Optional[str] = None,
+                           speaker_id: Optional[str] = None,
+                           **gen_kwargs) -> AsyncIterator[bytes]:
+        # Generate prompt using svara_text_to_tokens
+        prompt = svara_text_to_tokens(
+            text=text,
+            speaker_id=speaker_id or self.speaker_id,
+            audio_tokens=audio_reference,
+            transcript=reference_text,
+            tokenizer=self.tokenizer,
+            return_decoded=True
+        )
         
         # Log prompt details
-        if isinstance(prompt, list):
-            logger.info(f"Final prompt before inference: {len(prompt)} token IDs")
-            logger.debug(f"Token IDs (first 50): {prompt[:50]}")
-        else:
-            logger.info(f"Final prompt before tokenization: {len(prompt)} chars")
-            logger.debug(f"Full prompt: {prompt}")
+        logger.info(f"Final prompt before inference: {len(prompt)} chars")
+        logger.debug(f"Full prompt: {prompt}")
         
         audio_buf = AudioBuffer(self.prebuffer_samples)
         loop = asyncio.get_running_loop()

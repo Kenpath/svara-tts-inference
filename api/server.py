@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from tts_engine.voice_config import get_all_voices
 from tts_engine.orchestrator import SvaraTTSOrchestrator
 from tts_engine.timing import get_timing_stats, reset_timing_stats
-from tts_engine.utils import load_audio_from_bytes, svara_zero_shot_prompt, svara_prompt
+from tts_engine.utils import load_audio_from_bytes
 from tts_engine.codec import SNACCodec, get_or_load_tokenizer
 from api.models import VoiceResponse, VoicesResponse, TTSRequest
 
@@ -207,7 +207,7 @@ async def text_to_speech(
     
     # Determine mode: zero-shot or standard
     zero_shot_mode = request_reference_audio_bytes is not None
-    prompt = None
+    audio_tokens = None
     
     if zero_shot_mode:
         logger.info(f"Loading reference audio from bytes ({len(request_reference_audio_bytes)} bytes)")
@@ -223,36 +223,13 @@ async def text_to_speech(
         logger.info(f"Audio tokens encoded to {len(audio_tokens)} tokens")
         logger.info(f"First 10 tokens: {audio_tokens[:10]}")
         logger.info(f"Last 10 tokens: {audio_tokens[-10:]}")
-        
-        # Get tokenizer from global cache
-        tokenizer = get_or_load_tokenizer(TOKENIZER_MODEL)
-        
-        # Build zero-shot prompt (returns token IDs directly)
-        prompt = svara_zero_shot_prompt(
-            text=request_text,
-            audio_tokens=audio_tokens,
-            transcript=request_reference_transcript,
-            tokenizer=tokenizer
-        )
-        if isinstance(prompt, list):
-            logger.info(f"Prompt built: {len(prompt)} token IDs")
-            logger.info(f"Token ID preview (first 50): {prompt[:50]}")
-            logger.info(f"Token ID preview (last 50): {prompt[-50:]}")
-        else:
-            logger.info(f"Prompt built (length: {len(prompt)} chars)")
-            logger.info(f"Prompt preview (first 500 chars): {prompt[:500]}")
-            logger.info(f"Prompt preview (last 200 chars): {prompt[-200:]}")
     else:
-        # Standard TTS mode - build standard prompt
+        # Standard TTS mode
         if not request_voice:
             raise HTTPException(
                 status_code=400,
                 detail="'voice' parameter is required for standard TTS mode"
             )
-        
-        prompt = svara_prompt(request_text, request_voice)
-        logger.info(f"Standard prompt built (length: {len(prompt)} chars)")
-        logger.info(f"Prompt: {prompt}")
     
     # Use global orchestrator (already initialized, SNAC model cached)
     request_orchestrator = orchestrator
@@ -276,7 +253,13 @@ async def text_to_speech(
         async def audio_stream():
             """Stream audio chunks as they're generated."""
             try:
-                async for chunk in request_orchestrator.astream(request_text, prompt=prompt, **gen_kwargs):
+                async for chunk in request_orchestrator.astream(
+                    text=request_text,
+                    audio_reference=audio_tokens,
+                    reference_text=request_reference_transcript,
+                    speaker_id=request_voice,
+                    **gen_kwargs
+                ):
                     yield chunk
             except Exception as e:
                 print(f"Error during streaming: {e}")
@@ -296,7 +279,13 @@ async def text_to_speech(
         # Non-streaming: collect all audio chunks
         try:
             audio_chunks = []
-            async for chunk in request_orchestrator.astream(request_text, prompt=prompt, **gen_kwargs):
+            async for chunk in request_orchestrator.astream(
+                text=request_text,
+                audio_reference=audio_tokens,
+                reference_text=request_reference_transcript,
+                speaker_id=request_voice,
+                **gen_kwargs
+            ):
                 audio_chunks.append(chunk)
             
             complete_audio = b"".join(audio_chunks)

@@ -1,13 +1,12 @@
-
-from __future__ import annotations
+import os
 import json
 from typing import Iterator, AsyncIterator, Optional, Dict, Any, Union, List
 import requests
 import aiohttp
+from __future__ import annotations
 from .timing import track_time
 from .constants import END_OF_SPEECH
-from .codec import get_or_load_tokenizer
-import os
+
 class VLLMCompletionsTransport:
     """
     Sync transport for OpenAI-compatible /v1/completions streaming (SSE).
@@ -21,7 +20,7 @@ class VLLMCompletionsTransport:
             self.headers.update(headers)
 
     @track_time("vLLM.stream")
-    def stream(self, prompt: Union[str, List[int]], **gen_kwargs) -> Iterator[str]:
+    def stream(self, prompt: str, **gen_kwargs) -> Iterator[str]:
         payload: Dict[str, Any] = {
             "model": self.model,
             "stream": True,
@@ -33,20 +32,9 @@ class VLLMCompletionsTransport:
             "stop_token_ids": [END_OF_SPEECH]  # Stop at end of speech generation
         }
         
-        # Use prompt_token_ids if we have a list, otherwise use prompt string
-        if isinstance(prompt, list):
-            # Decode token IDs to string (includes custom tokens like <custom_token_X>)
-            # vLLM will tokenize it back to the same IDs
-            tokenizer_model = os.getenv("TOKENIZER_MODEL", os.getenv("VLLM_MODEL", "kenpath/svara-tts-v1"))
-            tokenizer = get_or_load_tokenizer(tokenizer_model)
-            prompt_str = tokenizer.decode(prompt, skip_special_tokens=False)
-            payload["prompt"] = prompt_str
-            print(f"[DEBUG] Decoded {len(prompt)} token IDs to prompt string ({len(prompt_str)} chars)")
-            print(f"[DEBUG] Token ID range: min={min(prompt)}, max={max(prompt)}")
-            print(f"[DEBUG] Prompt preview (first 200 chars): {prompt_str[:200]}")
-        else:
-            payload["prompt"] = prompt
-            print(f"[DEBUG] Sending prompt string to vLLM: {len(prompt)} chars")
+        # Assume prompt is always a string (pre-processed by orchestrator)
+        payload["prompt"] = prompt
+        print(f"[DEBUG] Sending prompt string to vLLM: {len(prompt)} chars")
         
         print(f"[DEBUG] vLLM payload keys: {list(payload.keys())}")
 
@@ -88,7 +76,7 @@ class VLLMCompletionsTransportAsync:
             self.headers.update(headers)
 
     @track_time("vLLM.astream")
-    async def astream(self, prompt: Union[str, List[int]], **gen_kwargs) -> AsyncIterator[str]:
+    async def astream(self, prompt: str, **gen_kwargs) -> AsyncIterator[str]:
         payload: Dict[str, Any] = {
             "model": self.model,
             "stream": True,
@@ -100,20 +88,9 @@ class VLLMCompletionsTransportAsync:
             "stop_token_ids": [END_OF_SPEECH]  # Stop at end of speech generation
         }
         
-        # Use prompt_token_ids if we have a list, otherwise use prompt string
-        if isinstance(prompt, list):
-            # Decode token IDs to string (includes custom tokens like <custom_token_X>)
-            # vLLM will tokenize it back to the same IDs
-            tokenizer_model = os.getenv("TOKENIZER_MODEL", os.getenv("VLLM_MODEL", "kenpath/svara-tts-v1"))
-            tokenizer = get_or_load_tokenizer(tokenizer_model)
-            prompt_str = tokenizer.decode(prompt, skip_special_tokens=False)
-            payload["prompt"] = prompt_str
-            print(f"[DEBUG] Decoded {len(prompt)} token IDs to prompt string ({len(prompt_str)} chars)")
-            print(f"[DEBUG] Token ID range: min={min(prompt)}, max={max(prompt)}")
-            print(f"[DEBUG] Prompt preview (first 200 chars): {prompt_str[:200]}")
-        else:
-            payload["prompt"] = prompt
-            print(f"[DEBUG] Sending prompt string to vLLM: {len(prompt)} chars")
+        # Assume prompt is always a string
+        payload["prompt"] = prompt
+        print(f"[DEBUG] Sending prompt string to vLLM: {len(prompt)} chars")
         
         print(f"[DEBUG] vLLM payload keys: {list(payload.keys())}")
 
