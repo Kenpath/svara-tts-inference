@@ -89,7 +89,7 @@ COPY scripts/ ./scripts/
 COPY supervisord.conf /etc/supervisor/conf.d/svara-tts.conf
 
 # Make scripts executable
-RUN chmod +x ./scripts/*.sh ./scripts/*.py
+RUN chmod +x ./scripts/*.sh
 
 # Create directories for logs and cache
 RUN mkdir -p /var/log/supervisor /root/.cache/huggingface
