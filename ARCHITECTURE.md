@@ -105,7 +105,7 @@
 5. Streams PCM audio chunks
 
 **Features:**
-- Sync and async interfaces
+- Async interface (stream and non-stream modes)
 - Concurrent decoding with thread pool
 - Audio prebuffering for smooth playback
 - Hop-only decoding for low latency
@@ -414,4 +414,3 @@ docker-compose up -d
 - [README.md](README.md) - Getting started
 - [REFACTORING_NOTES.md](REFACTORING_NOTES.md) - Code changes
 - [supervisord.conf](supervisord.conf) - Process configuration
-

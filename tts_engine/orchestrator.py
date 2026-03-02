@@ -1,45 +1,46 @@
 
 from __future__ import annotations
 import os
-from typing import Iterator, AsyncIterator, List, Optional, Literal, Union
+from typing import Iterator, AsyncIterator, List, Optional, Literal
 import concurrent.futures
 import asyncio
 import logging
-from .transports import VLLMCompletionsTransport, VLLMCompletionsTransportAsync
+import queue
+import threading
+import time
+from .transports import VLLMAsyncEngineTransport
 from .mapper import SvaraMapper, extract_custom_token_numbers
 from .codec import SNACCodec, get_or_load_tokenizer
-from .encoder import svara_text_to_tokens
+from .encoder import svara_text_to_tokens, svara_text_to_tokens_v05
 from .utils import create_speaker_id
-from .buffers import AudioBuffer, SyncFuture
+from .buffers import AudioBuffer
 from .timing import track_time
 
-logger = logging.getLogger(__name__)
+# Route orchestrator logs to Uvicorn logger so INFO lines are visible in container logs.
+logger = logging.getLogger("uvicorn.error")
+logger.setLevel(logging.INFO)
 
 class SvaraTTSOrchestrator:
     """
-    Sync/Async TTS orchestrator:
-    transport -> mapper -> decoder -> PCM int16 chunks.
+    TTS orchestrator:
+    async vLLM engine -> mapper -> decoder -> PCM int16 chunks.
     
     Args:
-        base_url: The base URL of the VLLM server.
         model: The model name.
         speaker_id: The speaker identifier (e.g., "Hindi (Male)", "English (Female)").
                     If not provided, will be constructed from lang_code and gender.
         lang_code: An ISO 639-1 language code (used if speaker_id not provided).
         gender: The gender of the voice (used if speaker_id not provided).
-        headers: The headers for the VLLM server.
         prebuffer_seconds: The number of seconds to prebuffer before yielding audio.
         concurrent_decode: If True, decode concurrently.
         max_workers: The number of workers to use for decoding.
         device: Device for SNAC decoder (cuda, mps, cpu, or None for auto).
     """
     def __init__(self,
-                 base_url: str,
                  model: str = "kenpath/svara-tts-v1",
                  speaker_id: Optional[str] = None,
                  lang_code: str = "en",
                  gender: Literal["male", "female"] = "male",
-                 headers: Optional[dict] = None,
                  prebuffer_seconds: float = 0.5,
                  concurrent_decode: bool = True,
                  max_workers: int = 2,
@@ -54,13 +55,15 @@ class SvaraTTSOrchestrator:
         self.tokenizer_model = os.getenv("TOKENIZER_MODEL", os.getenv("VLLM_MODEL", "kenpath/svara-tts-v1"))            
         self.tokenizer      = get_or_load_tokenizer(self.tokenizer_model)       
         
-        self.transport      = VLLMCompletionsTransport(base_url, model, headers)
-        self.transport_async = None  # lazy
-        self.mapper     = SvaraMapper()
+        self.transport_async = VLLMAsyncEngineTransport(model=self.model_name)
         self.codec      = SNACCodec(device)
         self.prebuffer_samples = int(self.codec.sample_rate * prebuffer_seconds)
         self.concurrent_decode = concurrent_decode
         self.max_workers    = max_workers
+
+    def _use_v05_prompting(self) -> bool:
+        m = (self.model_name or "").lower()
+        return "v0.5" in m or "voice-svara-tts-v1-fft-v0.5" in m
         
     # ------------ SYNC path ------------
     def stream(self, 
@@ -69,16 +72,42 @@ class SvaraTTSOrchestrator:
                reference_text: Optional[str] = None,
                speaker_id: Optional[str] = None,
                **gen_kwargs) -> Iterator[bytes]:
-        """Stream the TTS output.
-        
-        Args:
-            text: The text to synthesize.
-            audio_reference: Optional SNAC tokens for zero-shot voice cloning.
-            reference_text: Optional transcript for the reference audio.
-            speaker_id: Optional speaker ID to override the default.
-            gen_kwargs: Additional keyword arguments to pass to the transport.
         """
-        yield from self._stream_one(text, audio_reference=audio_reference, reference_text=reference_text, speaker_id=speaker_id, **gen_kwargs)
+        Sync wrapper around the async stream path.
+        """
+        out_q: queue.Queue[Optional[bytes]] = queue.Queue()
+        err_q: queue.Queue[BaseException] = queue.Queue()
+
+        async def _produce() -> None:
+            async for chunk in self.astream(
+                text=text,
+                audio_reference=audio_reference,
+                reference_text=reference_text,
+                speaker_id=speaker_id,
+                **gen_kwargs,
+            ):
+                out_q.put(chunk)
+
+        def _runner() -> None:
+            try:
+                asyncio.run(_produce())
+            except BaseException as exc:
+                err_q.put(exc)
+            finally:
+                out_q.put(None)
+
+        thread = threading.Thread(target=_runner, daemon=True)
+        thread.start()
+
+        while True:
+            chunk = out_q.get()
+            if chunk is None:
+                break
+            yield chunk
+
+        thread.join()
+        if not err_q.empty():
+            raise err_q.get()
 
     @track_time("Orchestrator.stream_one")
     def _stream_one(self, 
@@ -87,52 +116,14 @@ class SvaraTTSOrchestrator:
                     reference_text: Optional[str] = None,
                     speaker_id: Optional[str] = None,
                     **gen_kwargs) -> Iterator[bytes]:
-        
-        # Generate prompt using svara_text_to_tokens
-        prompt = svara_text_to_tokens(
+        # Kept for backward compatibility; callers should use `astream`.
+        yield from self.stream(
             text=text,
-            speaker_id=speaker_id or self.speaker_id,
-            audio_tokens=audio_reference,
-            transcript=reference_text,
-            tokenizer=self.tokenizer,
-            return_decoded=True
+            audio_reference=audio_reference,
+            reference_text=reference_text,
+            speaker_id=speaker_id,
+            **gen_kwargs,
         )
-        
-        # Log prompt details
-        logger.info(f"Final prompt before inference: {len(prompt)} chars")
-        logger.debug(f"Full prompt: {prompt}")
-        
-        audio_buf = AudioBuffer(self.prebuffer_samples)
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) if self.concurrent_decode else None
-        pending: List[concurrent.futures.Future] = []
-
-        def decode(win: List[int]) -> bytes:
-            return self.codec.decode_window(win)
-
-        def submit(win: List[int]):
-            return executor.submit(decode, win) if executor else SyncFuture(decode(win))
-
-        try:
-            for token_text in self.transport.stream(prompt, **gen_kwargs):
-                for n in extract_custom_token_numbers(token_text):
-                    win = self.mapper.feed_raw(n)
-                    if win is not None:
-                        pending.append(submit(win))
-                        
-                    # Yield when we have enough pending
-                    while len(pending) > 2:
-                        result = audio_buf.process(pending.pop(0).result())
-                        if result:
-                            yield result
-            
-            # Flush remaining
-            for fut in pending:
-                result = audio_buf.process(fut.result())
-                if result:
-                    yield result
-        finally:
-            if executor:
-                executor.shutdown(wait=True)
 
     # ------------ ASYNC path ------------
     async def astream(self, 
@@ -150,12 +141,6 @@ class SvaraTTSOrchestrator:
             speaker_id: Optional speaker ID to override the default.
             gen_kwargs: Additional keyword arguments to pass to the transport.
         """
-        if self.transport_async is None:
-            base_url = self.transport.url[:-12]  # remove '/completions'
-            self.transport_async = VLLMCompletionsTransportAsync(
-                base_url, self.transport.model, self.transport.headers
-            )
-        
         async for b in self._astream_one(text, audio_reference=audio_reference, reference_text=reference_text, speaker_id=speaker_id, **gen_kwargs):
             yield b
 
@@ -166,21 +151,34 @@ class SvaraTTSOrchestrator:
                            reference_text: Optional[str] = None,
                            speaker_id: Optional[str] = None,
                            **gen_kwargs) -> AsyncIterator[bytes]:
-        # Generate prompt using svara_text_to_tokens
-        prompt = svara_text_to_tokens(
-            text=text,
-            speaker_id=speaker_id or self.speaker_id,
-            audio_tokens=audio_reference,
-            transcript=reference_text,
-            tokenizer=self.tokenizer,
-            return_decoded=True
-        )
-        
-        # Log prompt details
-        logger.info(f"Final prompt before inference: {len(prompt)} chars")
-        logger.debug(f"Full prompt: {prompt}")
+        req_id = str(gen_kwargs.get("request_id", "unknown"))
+        voice_name = gen_kwargs.pop("voice_name", None)
+        req_start = time.perf_counter()
+        ttft_logged = False
+
+        if self._use_v05_prompting():
+            selected_voice = voice_name or os.getenv("SVARA_V05_DEFAULT_VOICE", "Prakash")
+            prompt = svara_text_to_tokens_v05(
+                text=text,
+                voice_name=selected_voice,
+                tokenizer=self.tokenizer,
+                return_decoded=True,
+            )
+            # v0.5 raw/modal path uses this stop token by default.
+            gen_kwargs.setdefault("stop_token_id", 49158)
+        else:
+            # Generate prompt using current v1 path.
+            prompt = svara_text_to_tokens(
+                text=text,
+                speaker_id=speaker_id or self.speaker_id,
+                audio_tokens=audio_reference,
+                transcript=reference_text,
+                tokenizer=self.tokenizer,
+                return_decoded=True
+            )
         
         audio_buf = AudioBuffer(self.prebuffer_samples)
+        mapper = SvaraMapper()
         loop = asyncio.get_running_loop()
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) if self.concurrent_decode else None
         pending: List[asyncio.Task] = []
@@ -194,10 +192,18 @@ class SvaraTTSOrchestrator:
             else:
                 return decode(win)
 
+        def _log_ttft_once() -> None:
+            nonlocal ttft_logged
+            if ttft_logged:
+                return
+            ttft_logged = True
+            ttft_ms = (time.perf_counter() - req_start) * 1000.0
+            logger.info("TTFT(model_level_orchestrator) req_id=%s %.2f ms", req_id, ttft_ms)
+
         try:
             async for token_text in self.transport_async.astream(prompt, **gen_kwargs):
                 for n in extract_custom_token_numbers(token_text):
-                    win = self.mapper.feed_raw(n)
+                    win = mapper.feed_raw(n)
                     if win is not None:
                         pending.append(asyncio.create_task(submit_async(win)))
                         
@@ -205,13 +211,21 @@ class SvaraTTSOrchestrator:
                     while len(pending) > 2:
                         result = audio_buf.process(await pending.pop(0))
                         if result:
+                            _log_ttft_once()
                             yield result
             
             # Flush remaining
             for task in pending:
                 result = audio_buf.process(await task)
                 if result:
+                    _log_ttft_once()
                     yield result
+            final = audio_buf.flush()
+            if final:
+                _log_ttft_once()
+                yield final
+            if not ttft_logged:
+                logger.info("TTFT(model_level_orchestrator) req_id=%s NA (no audio chunk emitted)", req_id)
         finally:
             if executor:
                 executor.shutdown(wait=True)

@@ -175,3 +175,50 @@ def svara_text_to_tokens(
         return tokenizer.decode(full_input_ids.tolist(), skip_special_tokens=False)
 
     return full_input_ids.tolist()
+
+
+def _token_id_or_default(tokenizer, token_text: str, default: int) -> int:
+    tok_id = tokenizer.convert_tokens_to_ids(token_text)
+    if isinstance(tok_id, int) and tok_id >= 0:
+        return tok_id
+    return default
+
+
+def svara_text_to_tokens_v05(
+    text: str,
+    voice_name: str,
+    tokenizer,
+    return_decoded: bool = False,
+) -> Union[List[int], str]:
+    """
+    Build prompt for voice-svara-tts-v0.5 style models (raw/modal path).
+
+    Format mirrors `svara_vllm_raw_modal.py`:
+      start_token + wrapped("<custom_token_3><|audio|> {voice}: {text}<|eot_id|><custom_token_4><custom_token_5>") + end_tokens
+    """
+    if tokenizer is None:
+        raise ValueError("tokenizer is required for svara_text_to_tokens_v05")
+    if not isinstance(text, str):
+        raise ValueError("text must be a string")
+    if not isinstance(voice_name, str) or not voice_name.strip():
+        raise ValueError("voice_name must be a non-empty string")
+
+    start_token = _token_id_or_default(tokenizer, "<custom_token_7>", 128259)
+    end_tokens = [
+        _token_id_or_default(tokenizer, "<|eot_id|>", 128009),
+        _token_id_or_default(tokenizer, "<custom_token_8>", 128260),
+        _token_id_or_default(tokenizer, "<custom_token_9>", 128261),
+        _token_id_or_default(tokenizer, "<custom_token_5>", 128257),
+    ]
+
+    formatted = f"<|audio|> {voice_name}: {text}<|eot_id|>"
+    wrapped = "<custom_token_3>" + formatted + "<custom_token_4><custom_token_5>"
+    prompt_tokens = tokenizer(wrapped, return_tensors="pt", add_special_tokens=False).input_ids
+
+    start_tensor = torch.tensor([[start_token]], dtype=torch.int64)
+    end_tensor = torch.tensor([end_tokens], dtype=torch.int64)
+    all_input_ids = torch.cat([start_tensor, prompt_tokens, end_tensor], dim=1).view(-1)
+
+    if return_decoded:
+        return tokenizer.decode(all_input_ids.tolist(), skip_special_tokens=False)
+    return all_input_ids.tolist()

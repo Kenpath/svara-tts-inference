@@ -91,6 +91,24 @@ def get_all_voices(model_id: Optional[str] = None) -> List[Voice]:
     return [v for v in ALL_VOICES if v.model_id == model_id]
 
 
+def resolve_voice_model_id(runtime_model: str) -> str:
+    """
+    Map runtime model repo/name to YAML voice model ID.
+
+    - v0.5 raw/modal-style models use voice-name lists (mapped to svara-tts-v2 YAML)
+    - v1 models use language+gender voices (svara-tts-v1 YAML)
+    """
+    m = (runtime_model or "").lower()
+    if "v0.5" in m or "svara-tts-v2" in m:
+        return "svara-tts-v2"
+    return "svara-tts-v1"
+
+
+def get_voices_for_runtime_model(runtime_model: str) -> List[Voice]:
+    """Get voices available for the currently configured runtime model."""
+    return get_all_voices(model_id=resolve_voice_model_id(runtime_model))
+
+
 def get_voice(voice_id: str) -> Optional[Voice]:
     """
     Get a specific voice by ID.
@@ -102,6 +120,19 @@ def get_voice(voice_id: str) -> Optional[Voice]:
         Voice object if found, None otherwise
     """
     return VOICE_REGISTRY.get(voice_id)
+
+
+def get_voice_by_name(name: str, model_id: Optional[str] = None) -> Optional[Voice]:
+    """Find a voice by display name, optionally scoped to a specific model."""
+    q = (name or "").strip().lower()
+    if not q:
+        return None
+    for v in ALL_VOICES:
+        if model_id is not None and v.model_id != model_id:
+            continue
+        if v.name.strip().lower() == q:
+            return v
+    return None
 
 
 def parse_voice_for_v1(voice_id: str) -> tuple[str, Literal["male", "female"]]:

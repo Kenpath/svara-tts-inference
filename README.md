@@ -8,7 +8,8 @@ Inference and deployment toolkit for Svara-TTS, an open-source multilingual text
 
 ## Features
 
-- **38 Voice Profiles**: Support for 19 Indian languages with male and female voices
+- **V1 First, V0.5 Optional**: Default setup targets `svara-tts-v1`; optional `v0.5` mode is also supported
+- **19 Indic Languages**: Multilingual synthesis across major Indic languages
 - **Streaming Audio**: Real-time audio generation with low-latency streaming
 - **Production Ready**: Docker deployment with vLLM and FastAPI
 - **GPU Accelerated**: CUDA-optimized inference with SNAC decoder
@@ -45,36 +46,37 @@ curl http://localhost:8080/v1/voices
 curl http://localhost:8080/v1/voices
 ```
 
-**Text-to-Speech:**
+**Text-to-Speech (v1 model style: language + gender):**
 ```bash
 curl -X POST http://localhost:8080/v1/text-to-speech \
   -H "Content-Type: application/json" \
   -d '{
-    "text": "नमस्ते, मैं स्वरा टीटीएस हूं",
-    "voice_id": "hi_male",
-    "stream": true
+    "transcript": "नमस्ते, मैं स्वरा टीटीएस हूं",
+    "language": "hi",
+    "gender": "male",
+    "stream": true,
+    "response_format": "wav"
   }' \
-  --output audio.pcm
-
-# Convert to WAV
-ffmpeg -f s16le -ar 24000 -ac 1 -i audio.pcm output.wav
+  --output output_v1.wav
 ```
 
-**Python Example:**
+**Python Example (streaming):**
 ```python
 import requests
 
 response = requests.post(
     "http://localhost:8080/v1/text-to-speech",
     json={
-        "text": "Hello from Svara TTS",
-        "voice_id": "en_female",
-        "stream": True
+        "transcript": "Hello from Svara TTS",
+        "language": "en",
+        "gender": "female",
+        "stream": True,
+        "response_format": "wav",
     },
     stream=True
 )
 
-with open("output.pcm", "wb") as f:
+with open("output.wav", "wb") as f:
     for chunk in response.iter_content(chunk_size=8192):
         f.write(chunk)
 ```
@@ -86,18 +88,35 @@ See [examples/api_client.py](examples/api_client.py) for more examples.
 ### Endpoints
 
 - `GET /health` - Health check
-- `GET /v1/voices` - List available voices
-- `POST /v1/text-to-speech` - Generate speech from text
+- `GET /v1/voices` - List available voices for active `.env` model (`VLLM_MODEL`)
+- `POST /v1/text-to-speech` - Generate speech from text (`stream=true/false`)
 
-### Voice IDs
+### Model Modes
 
-For `svara-tts-v1`, voice IDs follow the format `{language_code}_{gender}`:
-- Hindi: `hi_male`, `hi_female`
-- English: `en_male`, `en_female`
-- Bengali: `bn_male`, `bn_female`
-- [See full list in DEPLOYMENT.md](DEPLOYMENT.md)
+Set model mode via `.env` `VLLM_MODEL`:
 
-For `svara-tts-v2` (coming soon): `rohit`, `priya`, `arjun`, etc.
+- `kenpath/svara-tts-v1` (v1 mode)
+  - Input style: `transcript + language + gender`
+  - Voice selection is inferred from language/gender
+  - `GET /v1/voices` returns v1 voice IDs (example: `en_male`, `hi_female`)
+
+- `kenpath/voice-svara-tts-v1-fft-v0.5` (v0.5 mode)
+  - Input style: `transcript + voice_name` (with language/gender fields still present)
+  - Voice selection is explicit using `voice_name`
+  - `GET /v1/voices` returns name-based voices (example: `Prakash`, `Aaradhya`)
+  - Optional mode for users who need the raw/modal-style voice-name flow
+
+After changing `VLLM_MODEL`, restart/rebuild the service.
+
+### Voice Selection
+
+- For `kenpath/svara-tts-v1`, requests use `language + gender`.
+- For `voice-svara-tts-v1-fft-v0.5` (and v2-style voice sets), requests use `voice_name`.
+- `GET /v1/voices` requires no params and returns the valid voices for the active model.
+
+Examples:
+- v1 voice-like selection: `{"language":"en","gender":"male"}`
+- v0.5/v2 voice-name selection: `{"voice_name":"Prakash","language":"en","gender":"male"}`
 
 ## Deployment Guide
 
@@ -122,16 +141,10 @@ Topics covered:
 └────────┬────────┘
          │
          ▼
-┌─────────────────┐
-│   vLLM Server   │  Port 8000
-│   (LLM Engine)  │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  SNAC Decoder   │  CUDA/GPU
-│  (Audio Gen)    │
-└─────────────────┘
+┌───────────────────────────────┐
+│ Embedded vLLM AsyncLLMEngine │
+│ + SNAC Decoder (CUDA/GPU)    │
+└───────────────────────────────┘
 ```
 
 ## Development
@@ -144,14 +157,12 @@ svara-tts-inference/
 │   └── server.py          # Main API endpoints
 ├── tts_engine/            # Core TTS engine
 │   ├── orchestrator.py    # TTS orchestration
-│   ├── decoder_snac.py    # SNAC decoder
+│   ├── codec.py           # SNAC codec
 │   ├── transports.py      # vLLM transport
 │   ├── voice_config.py    # Voice profiles
 │   └── utils.py           # Utilities
 ├── examples/              # Example scripts
 │   └── api_client.py      # API client examples
-├── scripts/               # Deployment scripts
-│   └── start.sh          # Container startup
 ├── Dockerfile             # Docker image
 ├── docker-compose.yml     # Docker Compose config
 └── requirements.txt       # Python dependencies
@@ -162,11 +173,6 @@ svara-tts-inference/
 ```bash
 # Install dependencies
 pip install -r requirements.txt
-
-# Start vLLM server separately
-python -m vllm.entrypoints.openai.api_server \
-  --model kenpath/svara-tts-v1 \
-  --port 8000
 
 # Start FastAPI server
 cd api

@@ -39,6 +39,17 @@ class AudioBuffer:
         else:
             return pcm
 
+    def flush(self) -> Optional[bytes]:
+        """
+        Flush any buffered PCM that has not yet reached prebuffer threshold.
+        """
+        if not self.buf:
+            return None
+        result = bytes(self.buf)
+        self.buf.clear()
+        self.started = True
+        return result
+
 
 class SyncFuture:
     """Wrapper to make synchronous results look like futures."""
@@ -48,4 +59,3 @@ class SyncFuture:
     
     def result(self):
         return self._result
-

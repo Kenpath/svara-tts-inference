@@ -48,7 +48,7 @@ WORKDIR /app
 FROM base AS pytorch-builder
 
 # Install PyTorch with CUDA 12.8 support
-RUN pip3 install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu128
+RUN uv pip install --system torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu128
 
 # ============================================================================
 # Stage 2: Install vLLM with CUDA 12.8 support
@@ -61,8 +61,7 @@ ENV NVCC_THREADS=4
 ENV TORCH_CUDA_ARCH_LIST="8.9;9.0"
 
 # Install vLLM (will use the PyTorch with CUDA 12.8 we already installed)
-# Try to get pre-built wheel first, if not available it will build from source
-RUN pip3 install --no-build-isolation vllm || pip3 install vllm
+# RUN uv pip install --system vllm
 
 # ============================================================================
 # Stage 3: Install application dependencies
@@ -73,10 +72,7 @@ FROM vllm-builder AS app-deps
 COPY requirements.txt .
 
 # Install Python dependencies
-RUN pip3 install -r requirements.txt
-
-# Install additional dependencies for audio processing
-RUN pip3 install soundfile numpy
+RUN uv pip install --system -r requirements.txt
 
 # ============================================================================
 # Stage 4: Final application image
@@ -86,19 +82,14 @@ FROM app-deps AS final
 # Copy application code
 COPY tts_engine/ ./tts_engine/
 COPY api/ ./api/
-COPY scripts/ ./scripts/
+COPY assets/ ./assets/
 COPY supervisord.conf /etc/supervisor/conf.d/svara-tts.conf
-
-# Make scripts executable
-RUN chmod +x ./scripts/*.sh
 
 # Create directories for logs and cache
 RUN mkdir -p /var/log/supervisor /root/.cache/huggingface
 
-# Expose ports
-# 8000: vLLM server
-# 8080: FastAPI server
-EXPOSE 8000 8080
+# Expose API port
+EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
@@ -106,4 +97,3 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
 
 # Start supervisord to manage all processes
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/svara-tts.conf"]
-
