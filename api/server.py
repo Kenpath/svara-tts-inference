@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Optional, AsyncGenerator
 from contextlib import asynccontextmanager
 import asyncio
-import subprocess
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 from fastapi import FastAPI, HTTPException, Response, File, UploadFile, Form
 from fastapi.responses import StreamingResponse
@@ -23,22 +28,28 @@ logger = logging.getLogger(__name__)
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from tts_engine.voice_config import get_all_voices
+from tts_engine.voice_config import get_all_voices, get_speaker_id
 from tts_engine.orchestrator import SvaraTTSOrchestrator
+from tts_engine.transports import VLLMEmbeddedTransport
 from tts_engine.timing import get_timing_stats, reset_timing_stats
 from tts_engine.utils import load_audio_from_bytes
 from tts_engine.codec import SNACCodec, get_or_load_tokenizer
-from api.models import VoiceResponse, VoicesResponse, TTSRequest
+from api.models import VoiceResponse, VoicesResponse, TTSRequest, OpenAISpeechRequest
 
 
 # ============================================================================
 # Configuration
 # ============================================================================
 
-VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
 VLLM_MODEL = os.getenv("VLLM_MODEL", "kenpath/svara-tts-v1")
 TOKENIZER_MODEL = os.getenv("TOKENIZER_MODEL", VLLM_MODEL)  # Defaults to VLLM_MODEL
 TTS_DEVICE = os.getenv("TTS_DEVICE", None)  # None = auto-detect (CUDA/MPS/CPU)
+VLLM_GPU_MEMORY_UTILIZATION = float(os.getenv("VLLM_GPU_MEMORY_UTILIZATION", "0.9"))
+VLLM_MAX_MODEL_LEN = int(os.getenv("VLLM_MAX_MODEL_LEN", "4096"))
+VLLM_TENSOR_PARALLEL_SIZE = int(os.getenv("VLLM_TENSOR_PARALLEL_SIZE", "1"))
+VLLM_QUANTIZATION = os.getenv("VLLM_QUANTIZATION") or None
+VLLM_ENFORCE_EAGER = os.getenv("VLLM_ENFORCE_EAGER", "false").lower() in ("true", "1", "yes")
+VLLM_DTYPE = os.getenv("VLLM_DTYPE", "auto")
 # HF_TOKEN is checked in codec.get_or_load_tokenizer() for private models
 
 # Global instances (initialized in lifespan)
@@ -55,16 +66,30 @@ async def lifespan(app: FastAPI):
     global orchestrator
     
     print(f"🚀 Initializing Svara TTS API...")
-    print(f"   vLLM URL: {VLLM_BASE_URL}")
     print(f"   Model: {VLLM_MODEL}")
     print(f"   Tokenizer Model: {TOKENIZER_MODEL}")
     print(f"   Device: {TTS_DEVICE or 'auto-detect'}")
+    print(f"   dtype: {VLLM_DTYPE}, quantization: {VLLM_QUANTIZATION}")
+    print(f"   max_model_len: {VLLM_MAX_MODEL_LEN}, enforce_eager: {VLLM_ENFORCE_EAGER}")
     print(f"   HF_TOKEN: {'set' if os.getenv('HF_TOKEN') else 'not set'}")
-    
+
+    # Initialize embedded vLLM engine (singleton)
+    VLLMEmbeddedTransport.initialize_engine(
+        model=VLLM_MODEL,
+        gpu_memory_utilization=VLLM_GPU_MEMORY_UTILIZATION,
+        max_model_len=VLLM_MAX_MODEL_LEN,
+        tensor_parallel_size=VLLM_TENSOR_PARALLEL_SIZE,
+        dtype=VLLM_DTYPE,
+        quantization=VLLM_QUANTIZATION,
+        enforce_eager=VLLM_ENFORCE_EAGER,
+    )
+    print(f"✓ vLLM engine initialized (embedded)")
+
+    transport = VLLMEmbeddedTransport(model=VLLM_MODEL)
+
     # Initialize orchestrator with default settings
-    # We'll create new instances per request with specific voice settings
     orchestrator = SvaraTTSOrchestrator(
-        base_url=VLLM_BASE_URL,
+        transport=transport,
         model=VLLM_MODEL,
         speaker_id="English (Male)",  # Default, will be overridden per request
         device=TTS_DEVICE,
@@ -72,11 +97,9 @@ async def lifespan(app: FastAPI):
         concurrent_decode=True,
         max_workers=2,
     )
-    
-    # Note: Tokenizer is loaded on-demand and cached globally in codec.py
+
     print(f"✓ Orchestrator initialized")
     print(f"✓ Loaded {len(get_all_voices())} voices")
-    print(f"✓ Tokenizer will be lazy-loaded on first zero-shot request")
     
     yield
     
@@ -212,7 +235,7 @@ async def health_check():
     return {
         "status": "healthy",
         "model": VLLM_MODEL,
-        "vllm_url": VLLM_BASE_URL,
+        "engine": "embedded",
     }
 
 
@@ -411,6 +434,72 @@ async def text_to_speech(
                 status_code=500,
                 detail=f"Error generating audio: {str(e)}"
             )
+
+
+@app.post("/v1/audio/speech")
+async def openai_speech(req: OpenAISpeechRequest):
+    """
+    OpenAI-compatible text-to-speech endpoint.
+
+    Drop-in replacement for OpenAI's /v1/audio/speech so clients using
+    the OpenAI TTS SDK work out of the box.
+    """
+    # Map voice ID to speaker ID
+    try:
+        speaker_id = get_speaker_id(req.voice)
+    except ValueError:
+        available = [v.voice_id for v in get_all_voices()]
+        raise HTTPException(
+            status_code=400,
+            detail=f"Voice '{req.voice}' not found. Available voices: {available}"
+        )
+
+    # Map format to media type
+    format_media_types = {
+        "mp3": "audio/mpeg",
+        "opus": "audio/ogg",
+        "aac": "audio/aac",
+        "wav": "audio/wav",
+        "pcm": "audio/pcm",
+    }
+    media_type = format_media_types.get(req.response_format, "audio/mpeg")
+
+    pcm_generator = orchestrator.astream(
+        text=req.input,
+        speaker_id=speaker_id,
+    )
+
+    audio_stream = audio_stream_converter(
+        pcm_generator,
+        format=req.response_format,
+    )
+
+    if req.stream:
+        return StreamingResponse(
+            audio_stream,
+            media_type=media_type,
+            headers={
+                "Content-Type": media_type,
+                "X-Sample-Rate": "24000",
+                "X-Channels": "1",
+            }
+        )
+    else:
+        # Non-streaming: collect all audio and return complete file (OpenAI default)
+        audio_chunks = []
+        async for chunk in audio_stream:
+            audio_chunks.append(chunk)
+
+        complete_audio = b"".join(audio_chunks)
+
+        return Response(
+            content=complete_audio,
+            media_type=media_type,
+            headers={
+                "Content-Type": media_type,
+                "Content-Length": str(len(complete_audio)),
+            }
+        )
 
 
 # ============================================================================

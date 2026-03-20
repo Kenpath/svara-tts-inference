@@ -75,3 +75,13 @@ class TTSRequest(BaseModel):
                 raise ValueError(f"Invalid base64 audio data: {str(e)}")
         raise ValueError("reference_audio must be a base64-encoded string")
 
+
+class OpenAISpeechRequest(BaseModel):
+    """OpenAI-compatible speech request (POST /v1/audio/speech)."""
+    model: str = Field(default="svara-tts-v1", description="Model name (accepted but not used for model selection)")
+    input: str = Field(..., min_length=1, max_length=5000, description="Text to synthesize")
+    voice: str = Field(..., description="Voice ID, e.g. 'hi_male', 'en_female'")
+    response_format: str = Field(default="mp3", description="Audio format: mp3, opus, aac, wav, pcm")
+    speed: float = Field(default=1.0, ge=0.5, le=2.0, description="Playback speed (accepted but not yet implemented)")
+    stream: bool = Field(default=False, description="Stream audio response")
+

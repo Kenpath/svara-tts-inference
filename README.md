@@ -2,7 +2,7 @@
 
 Inference and deployment toolkit for Svara-TTS, an open-source multilingual text-to-speech model for Indic languages — includes examples for local GGUF inference, Gradio demo, and production-ready API deployment.
 
-[![🤗 Hugging Face - svara-tts-v1 Model](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Model-black)](https://huggingface.co/kenpath/svara-tts-v1) 
+[![🤗 Hugging Face - svara-tts-v1 Model](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Model-black)](https://huggingface.co/kenpath/svara-tts-v1)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/15YxFo1DzdQNbFUIZ1HJA4AN4oHqKxGtg)
 [![🤗 Hugging Face - Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-green)](https://huggingface.co/spaces/kenpath/svara-tts)
 
@@ -10,9 +10,11 @@ Inference and deployment toolkit for Svara-TTS, an open-source multilingual text
 
 - **38 Voice Profiles**: Support for 19 Indian languages with male and female voices
 - **Streaming Audio**: Real-time audio generation with low-latency streaming
-- **Production Ready**: Docker deployment with vLLM and FastAPI
+- **OpenAI-Compatible API**: Drop-in replacement for OpenAI's `/v1/audio/speech` endpoint
+- **Production Ready**: Docker deployment with embedded vLLM engine
 - **GPU Accelerated**: CUDA-optimized inference with SNAC decoder
-- **API Compatible**: ElevenLabs-style REST API for easy integration
+- **Multiple Audio Formats**: Output in MP3, Opus, AAC, WAV, or raw PCM via ffmpeg
+- **Zero-Shot Voice Cloning**: Clone any voice with a short audio reference
 
 ## Supported Languages
 
@@ -45,38 +47,66 @@ curl http://localhost:8080/v1/voices
 curl http://localhost:8080/v1/voices
 ```
 
-**Text-to-Speech:**
+**Text-to-Speech (streaming WAV):**
 ```bash
-curl -X POST http://localhost:8080/v1/text-to-speech \
+curl -N -X POST http://localhost:8080/v1/text-to-speech \
   -H "Content-Type: application/json" \
   -d '{
     "text": "नमस्ते, मैं स्वरा टीटीएस हूं",
-    "voice_id": "hi_male",
+    "voice": "Hindi (Male)",
+    "response_format": "wav",
     "stream": true
   }' \
-  --output audio.pcm
-
-# Convert to WAV
-ffmpeg -f s16le -ar 24000 -ac 1 -i audio.pcm output.wav
+  --output audio.wav
 ```
 
-**Python Example:**
+**OpenAI-Compatible Endpoint:**
+```bash
+curl -X POST http://localhost:8080/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": "Hello from Svara TTS!",
+    "voice": "en_male",
+    "response_format": "mp3"
+  }' \
+  --output speech.mp3
+```
+
+**Python Example (requests):**
 ```python
 import requests
 
+# Streaming TTS
 response = requests.post(
     "http://localhost:8080/v1/text-to-speech",
     json={
         "text": "Hello from Svara TTS",
-        "voice_id": "en_female",
-        "stream": True
+        "voice": "English (Female)",
+        "response_format": "mp3",
+        "stream": True,
     },
-    stream=True
+    stream=True,
 )
 
-with open("output.pcm", "wb") as f:
+with open("output.mp3", "wb") as f:
     for chunk in response.iter_content(chunk_size=8192):
         f.write(chunk)
+```
+
+**Python Example (OpenAI SDK):**
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="unused")
+
+response = client.audio.speech.create(
+    model="svara-tts-v1",
+    voice="hi_female",
+    input="नमस्ते, मैं स्वरा हूं।",
+    response_format="mp3",
+)
+
+response.stream_to_file("output.mp3")
 ```
 
 See [examples/api_client.py](examples/api_client.py) for more examples.
@@ -85,9 +115,14 @@ See [examples/api_client.py](examples/api_client.py) for more examples.
 
 ### Endpoints
 
-- `GET /health` - Health check
-- `GET /v1/voices` - List available voices
-- `POST /v1/text-to-speech` - Generate speech from text
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/v1/voices` | GET | List available voices |
+| `/v1/text-to-speech` | POST | Generate speech (full-featured, supports zero-shot cloning) |
+| `/v1/audio/speech` | POST | OpenAI-compatible TTS endpoint |
+| `/debug/timing` | GET | Performance timing statistics |
+| `/debug/timing/reset` | POST | Reset timing stats |
 
 ### Voice IDs
 
@@ -98,6 +133,18 @@ For `svara-tts-v1`, voice IDs follow the format `{language_code}_{gender}`:
 - [See full list in DEPLOYMENT.md](DEPLOYMENT.md)
 
 For `svara-tts-v2` (coming soon): `rohit`, `priya`, `arjun`, etc.
+
+### Audio Formats
+
+All endpoints support multiple output formats via the `response_format` parameter:
+
+| Format | MIME Type | Notes |
+|--------|-----------|-------|
+| `mp3` | `audio/mpeg` | Default for `/v1/audio/speech` |
+| `opus` | `audio/ogg` | Default for `/v1/text-to-speech`, great for streaming |
+| `aac` | `audio/aac` | ADTS container |
+| `wav` | `audio/wav` | Uncompressed, larger files |
+| `pcm` | `audio/pcm` | Raw signed 16-bit LE, 24kHz mono |
 
 ## Deployment Guide
 
@@ -115,24 +162,30 @@ Topics covered:
 
 ## Architecture
 
+The server runs as a **single process** with the vLLM engine embedded directly in the FastAPI application. This eliminates the HTTP hop between API server and LLM engine, reducing latency and operational complexity.
+
 ```
-┌─────────────────┐
-│   FastAPI       │  Port 8080
-│   API Server    │  
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   vLLM Server   │  Port 8000
-│   (LLM Engine)  │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  SNAC Decoder   │  CUDA/GPU
-│  (Audio Gen)    │
-└─────────────────┘
+┌──────────────────────────────────┐
+│         FastAPI Server           │  Port 8080
+│                                  │
+│  ┌────────────────────────────┐  │
+│  │   Embedded vLLM Engine     │  │
+│  │   (AsyncLLMEngine)         │  │
+│  └──────────┬─────────────────┘  │
+│             │                    │
+│  ┌──────────▼─────────────────┐  │
+│  │   SNAC Decoder (CUDA)      │  │
+│  │   Token → PCM Audio        │  │
+│  └──────────┬─────────────────┘  │
+│             │                    │
+│  ┌──────────▼─────────────────┐  │
+│  │   ffmpeg (format convert)  │  │
+│  │   PCM → MP3/Opus/WAV/AAC  │  │
+│  └────────────────────────────┘  │
+└──────────────────────────────────┘
 ```
+
+For detailed architecture documentation, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Development
 
@@ -141,20 +194,29 @@ Topics covered:
 ```
 svara-tts-inference/
 ├── api/                    # FastAPI server
-│   └── server.py          # Main API endpoints
-├── tts_engine/            # Core TTS engine
-│   ├── orchestrator.py    # TTS orchestration
-│   ├── decoder_snac.py    # SNAC decoder
-│   ├── transports.py      # vLLM transport
-│   ├── voice_config.py    # Voice profiles
-│   └── utils.py           # Utilities
-├── examples/              # Example scripts
-│   └── api_client.py      # API client examples
-├── scripts/               # Deployment scripts
-│   └── start.sh          # Container startup
-├── Dockerfile             # Docker image
-├── docker-compose.yml     # Docker Compose config
-└── requirements.txt       # Python dependencies
+│   ├── server.py           # Main API endpoints + engine init
+│   └── models.py           # Pydantic request/response models
+├── tts_engine/             # Core TTS engine
+│   ├── orchestrator.py     # TTS pipeline orchestration
+│   ├── transports.py       # Embedded vLLM transport
+│   ├── buffers.py          # Audio prebuffering
+│   ├── mapper.py           # Token-to-SNAC mapping
+│   ├── codec.py            # SNAC encoder/decoder
+│   ├── voice_config.py     # Voice profiles
+│   ├── encoder.py          # Text-to-token encoding
+│   ├── constants.py        # Token IDs and special tokens
+│   ├── timing.py           # Performance tracking
+│   └── utils.py            # Utilities
+├── assets/                 # Voice config YAML files
+├── examples/               # Example scripts
+│   └── api_client.py       # API client examples
+├── scripts/                # Dev scripts
+│   └── start-dev.sh        # Dev startup (single process)
+├── Dockerfile              # Docker image
+├── docker-compose.yml      # Docker Compose config
+├── supervisord.conf        # Process manager config
+├── requirements.txt        # Python dependencies
+└── .env.example            # Environment variable template
 ```
 
 ### Local Development
@@ -163,15 +225,17 @@ svara-tts-inference/
 # Install dependencies
 pip install -r requirements.txt
 
-# Start vLLM server separately
-python -m vllm.entrypoints.openai.api_server \
-  --model kenpath/svara-tts-v1 \
-  --port 8000
+# Configure environment (optional)
+cp .env.example .env
 
-# Start FastAPI server
-cd api
-python server.py
+# Start the server (vLLM engine starts embedded)
+./scripts/start-dev.sh
+
+# Or run directly
+cd api && python server.py
 ```
+
+The vLLM engine initializes in-process during FastAPI startup — no separate vLLM server needed.
 
 ## Requirements
 

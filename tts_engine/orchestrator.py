@@ -5,7 +5,7 @@ from typing import Iterator, AsyncIterator, List, Optional, Literal, Union
 import concurrent.futures
 import asyncio
 import logging
-from .transports import VLLMCompletionsTransport, VLLMCompletionsTransportAsync
+from .transports import VLLMEmbeddedTransport
 from .mapper import SvaraMapper, extract_custom_token_numbers
 from .codec import SNACCodec, get_or_load_tokenizer
 from .encoder import svara_text_to_tokens
@@ -19,27 +19,25 @@ class SvaraTTSOrchestrator:
     """
     Sync/Async TTS orchestrator:
     transport -> mapper -> decoder -> PCM int16 chunks.
-    
+
     Args:
-        base_url: The base URL of the VLLM server.
-        model: The model name.
+        transport: The VLLMEmbeddedTransport instance.
+        model: The model name (for tokenizer lookup).
         speaker_id: The speaker identifier (e.g., "Hindi (Male)", "English (Female)").
                     If not provided, will be constructed from lang_code and gender.
         lang_code: An ISO 639-1 language code (used if speaker_id not provided).
         gender: The gender of the voice (used if speaker_id not provided).
-        headers: The headers for the VLLM server.
         prebuffer_seconds: The number of seconds to prebuffer before yielding audio.
         concurrent_decode: If True, decode concurrently.
         max_workers: The number of workers to use for decoding.
         device: Device for SNAC decoder (cuda, mps, cpu, or None for auto).
     """
     def __init__(self,
-                 base_url: str,
+                 transport: VLLMEmbeddedTransport,
                  model: str = "kenpath/svara-tts-v1",
                  speaker_id: Optional[str] = None,
                  lang_code: str = "en",
                  gender: Literal["male", "female"] = "male",
-                 headers: Optional[dict] = None,
                  prebuffer_seconds: float = 0.5,
                  concurrent_decode: bool = True,
                  max_workers: int = 2,
@@ -51,12 +49,10 @@ class SvaraTTSOrchestrator:
             self.speaker_id = speaker_id
 
         self.model_name = model
-        self.tokenizer_model = os.getenv("TOKENIZER_MODEL", os.getenv("VLLM_MODEL", "kenpath/svara-tts-v1"))            
-        self.tokenizer      = get_or_load_tokenizer(self.tokenizer_model)       
-        
-        self.transport      = VLLMCompletionsTransport(base_url, model, headers)
-        self.transport_async = None  # lazy
-        self.mapper     = SvaraMapper()
+        self.tokenizer_model = os.getenv("TOKENIZER_MODEL", os.getenv("VLLM_MODEL", "kenpath/svara-tts-v1"))
+        self.tokenizer      = get_or_load_tokenizer(self.tokenizer_model)
+
+        self.transport      = transport
         self.codec      = SNACCodec(device)
         self.prebuffer_samples = int(self.codec.sample_rate * prebuffer_seconds)
         self.concurrent_decode = concurrent_decode
@@ -102,6 +98,7 @@ class SvaraTTSOrchestrator:
         logger.info(f"Final prompt before inference: {len(prompt)} chars")
         logger.debug(f"Full prompt: {prompt}")
         
+        mapper = SvaraMapper()
         audio_buf = AudioBuffer(self.prebuffer_samples)
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) if self.concurrent_decode else None
         pending: List[concurrent.futures.Future] = []
@@ -115,21 +112,26 @@ class SvaraTTSOrchestrator:
         try:
             for token_text in self.transport.stream(prompt, **gen_kwargs):
                 for n in extract_custom_token_numbers(token_text):
-                    win = self.mapper.feed_raw(n)
+                    win = mapper.feed_raw(n)
                     if win is not None:
                         pending.append(submit(win))
-                        
+
                     # Yield when we have enough pending
                     while len(pending) > 2:
                         result = audio_buf.process(pending.pop(0).result())
                         if result:
                             yield result
-            
+
             # Flush remaining
             for fut in pending:
                 result = audio_buf.process(fut.result())
                 if result:
                     yield result
+
+            # Flush any prebuffered audio that never hit the threshold
+            tail = audio_buf.flush()
+            if tail:
+                yield tail
         finally:
             if executor:
                 executor.shutdown(wait=True)
@@ -150,12 +152,6 @@ class SvaraTTSOrchestrator:
             speaker_id: Optional speaker ID to override the default.
             gen_kwargs: Additional keyword arguments to pass to the transport.
         """
-        if self.transport_async is None:
-            base_url = self.transport.url[:-12]  # remove '/completions'
-            self.transport_async = VLLMCompletionsTransportAsync(
-                base_url, self.transport.model, self.transport.headers
-            )
-        
         async for b in self._astream_one(text, audio_reference=audio_reference, reference_text=reference_text, speaker_id=speaker_id, **gen_kwargs):
             yield b
 
@@ -180,6 +176,7 @@ class SvaraTTSOrchestrator:
         logger.info(f"Final prompt before inference: {len(prompt)} chars")
         logger.debug(f"Full prompt: {prompt}")
         
+        mapper = SvaraMapper()
         audio_buf = AudioBuffer(self.prebuffer_samples)
         loop = asyncio.get_running_loop()
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) if self.concurrent_decode else None
@@ -195,23 +192,28 @@ class SvaraTTSOrchestrator:
                 return decode(win)
 
         try:
-            async for token_text in self.transport_async.astream(prompt, **gen_kwargs):
+            async for token_text in self.transport.astream(prompt, **gen_kwargs):
                 for n in extract_custom_token_numbers(token_text):
-                    win = self.mapper.feed_raw(n)
+                    win = mapper.feed_raw(n)
                     if win is not None:
                         pending.append(asyncio.create_task(submit_async(win)))
-                        
+
                     # Yield when we have enough pending
                     while len(pending) > 2:
                         result = audio_buf.process(await pending.pop(0))
                         if result:
                             yield result
-            
+
             # Flush remaining
             for task in pending:
                 result = audio_buf.process(await task)
                 if result:
                     yield result
+
+            # Flush any prebuffered audio that never hit the threshold
+            tail = audio_buf.flush()
+            if tail:
+                yield tail
         finally:
             if executor:
                 executor.shutdown(wait=True)

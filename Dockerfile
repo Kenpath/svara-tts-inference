@@ -87,19 +87,13 @@ FROM app-deps AS final
 COPY tts_engine/ ./tts_engine/
 COPY api/ ./api/
 COPY assets/ ./assets/
-COPY scripts/ ./scripts/
 COPY supervisord.conf /etc/supervisor/conf.d/svara-tts.conf
-
-# Make scripts executable
-RUN chmod +x ./scripts/*.sh
 
 # Create directories for logs and cache
 RUN mkdir -p /var/log/supervisor /root/.cache/huggingface
 
-# Expose ports
-# 8000: vLLM server
-# 8080: FastAPI server
-EXPOSE 8000 8080
+# Expose port
+EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \

@@ -39,6 +39,15 @@ class AudioBuffer:
         else:
             return pcm
 
+    def flush(self) -> Optional[bytes]:
+        """Flush any remaining buffered audio. Call after all data has been processed."""
+        if not self.buf:
+            return None
+        result = bytes(self.buf)
+        self.buf.clear()
+        self.started = True
+        return result
+
 
 class SyncFuture:
     """Wrapper to make synchronous results look like futures."""
