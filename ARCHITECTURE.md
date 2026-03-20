@@ -80,10 +80,7 @@ The Svara TTS API runs as a **single process** with the vLLM inference engine em
 **Endpoints:**
 - `GET /health` — Health check
 - `GET /v1/voices` — List available voices
-- `POST /v1/text-to-speech` — Full-featured TTS (supports zero-shot cloning, gen params)
-- `POST /v1/audio/speech` — OpenAI-compatible TTS endpoint
-- `GET /debug/timing` — Performance timing statistics
-- `POST /debug/timing/reset` — Reset timing stats
+- `POST /v1/audio/speech` — OpenAI-compatible TTS (supports streaming, zero-shot cloning)
 
 **Features:**
 - Async/await for high concurrency
@@ -130,7 +127,7 @@ The Svara TTS API runs as a **single process** with the vLLM inference engine em
 - Sample Rate: 24 kHz
 - Bit Depth: 16-bit PCM
 - Channels: Mono
-- Device: CUDA/MPS/CPU (auto-detected via `TTS_DEVICE` env var)
+- Device: CPU (default), CUDA, or MPS (configurable via `SNAC_DEVICE` env var)
 
 **Process:**
 1. Receives 7-code frames from mapper
@@ -174,7 +171,7 @@ The Svara TTS API runs as a **single process** with the vLLM inference engine em
 
 ```
 1. HTTP Request
-   POST /v1/text-to-speech  or  POST /v1/audio/speech
+   POST /v1/audio/speech
    ↓
 2. FastAPI Server
    - Validate request (Pydantic)
@@ -281,7 +278,7 @@ All configurable via `.env` file:
 **API:**
 - `API_PORT` — FastAPI port
 - `API_HOST` — FastAPI bind host
-- `TTS_DEVICE` — SNAC decoder device (cuda, mps, cpu)
+- `SNAC_DEVICE` — SNAC decoder device (cuda, mps, cpu)
 
 **See [`.env.example`](.env.example) for full list**
 
@@ -367,16 +364,8 @@ All configurable via `.env` file:
 
 ### Built-in Monitoring
 
-- **Timing stats**: `GET /debug/timing` returns per-function call counts, avg/min/max latency
 - **Health check**: `GET /health` for container orchestration
 - **Logs**: Streamed to stdout/stderr via supervisord
-
-### Future Monitoring
-
-- **Metrics:** Prometheus + Grafana
-- **Tracing:** OpenTelemetry
-- **Logging:** ELK Stack
-- **Alerts:** PagerDuty, Slack notifications
 
 ## Performance Optimization
 

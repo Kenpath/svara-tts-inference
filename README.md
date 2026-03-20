@@ -12,9 +12,10 @@ Inference and deployment toolkit for Svara-TTS, an open-source multilingual text
 - **Streaming Audio**: Real-time audio generation with low-latency streaming
 - **OpenAI-Compatible API**: Drop-in replacement for OpenAI's `/v1/audio/speech` endpoint
 - **Production Ready**: Docker deployment with embedded vLLM engine
-- **GPU Accelerated**: CUDA-optimized inference with SNAC decoder
+- **GPU Accelerated**: CUDA-optimized inference with configurable SNAC decoder device
 - **Multiple Audio Formats**: Output in MP3, Opus, AAC, WAV, or raw PCM via ffmpeg
 - **Zero-Shot Voice Cloning**: Clone any voice with a short audio reference
+- **Long-Text Chunking**: Automatic sentence-boundary splitting with crossfade stitching
 
 ## Supported Languages
 
@@ -47,19 +48,6 @@ curl http://localhost:8080/v1/voices
 curl http://localhost:8080/v1/voices
 ```
 
-**Text-to-Speech (streaming WAV):**
-```bash
-curl -N -X POST http://localhost:8080/v1/text-to-speech \
-  -H "Content-Type: application/json" \
-  -d '{
-    "text": "नमस्ते, मैं स्वरा टीटीएस हूं",
-    "voice": "Hindi (Male)",
-    "response_format": "wav",
-    "stream": true
-  }' \
-  --output audio.wav
-```
-
 **OpenAI-Compatible Endpoint:**
 ```bash
 curl -X POST http://localhost:8080/v1/audio/speech \
@@ -72,25 +60,17 @@ curl -X POST http://localhost:8080/v1/audio/speech \
   --output speech.mp3
 ```
 
-**Python Example (requests):**
-```python
-import requests
-
-# Streaming TTS
-response = requests.post(
-    "http://localhost:8080/v1/text-to-speech",
-    json={
-        "text": "Hello from Svara TTS",
-        "voice": "English (Female)",
-        "response_format": "mp3",
-        "stream": True,
-    },
-    stream=True,
-)
-
-with open("output.mp3", "wb") as f:
-    for chunk in response.iter_content(chunk_size=8192):
-        f.write(chunk)
+**Streaming:**
+```bash
+curl -N -X POST http://localhost:8080/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": "नमस्ते, मैं स्वरा टीटीएस हूं",
+    "voice": "hi_male",
+    "response_format": "wav",
+    "stream": true
+  }' \
+  --output audio.wav
 ```
 
 **Python Example (OpenAI SDK):**
@@ -119,10 +99,7 @@ See [examples/api_client.py](examples/api_client.py) for more examples.
 |----------|--------|-------------|
 | `/health` | GET | Health check |
 | `/v1/voices` | GET | List available voices |
-| `/v1/text-to-speech` | POST | Generate speech (full-featured, supports zero-shot cloning) |
-| `/v1/audio/speech` | POST | OpenAI-compatible TTS endpoint |
-| `/debug/timing` | GET | Performance timing statistics |
-| `/debug/timing/reset` | POST | Reset timing stats |
+| `/v1/audio/speech` | POST | OpenAI-compatible TTS (supports streaming, zero-shot cloning) |
 
 ### Voice IDs
 
@@ -132,7 +109,7 @@ For `svara-tts-v1`, voice IDs follow the format `{language_code}_{gender}`:
 - Bengali: `bn_male`, `bn_female`
 - [See full list in DEPLOYMENT.md](DEPLOYMENT.md)
 
-For `svara-tts-v2` (coming soon): `rohit`, `priya`, `arjun`, etc.
+The `/v1/audio/speech` endpoint also accepts display names like `Hindi (Male)`, `English (Female)`.
 
 ### Audio Formats
 
@@ -140,8 +117,8 @@ All endpoints support multiple output formats via the `response_format` paramete
 
 | Format | MIME Type | Notes |
 |--------|-----------|-------|
-| `mp3` | `audio/mpeg` | Default for `/v1/audio/speech` |
-| `opus` | `audio/ogg` | Default for `/v1/text-to-speech`, great for streaming |
+| `mp3` | `audio/mpeg` | Default |
+| `opus` | `audio/ogg` | Great for streaming |
 | `aac` | `audio/aac` | ADTS container |
 | `wav` | `audio/wav` | Uncompressed, larger files |
 | `pcm` | `audio/pcm` | Raw signed 16-bit LE, 24kHz mono |
@@ -150,7 +127,7 @@ All endpoints support multiple output formats via the `response_format` paramete
 
 For detailed deployment instructions, configuration options, and troubleshooting:
 
-**📖 [Read the Full Deployment Guide →](DEPLOYMENT.md)**
+**[Read the Full Deployment Guide](DEPLOYMENT.md)**
 
 Topics covered:
 - Prerequisites and hardware requirements
@@ -174,8 +151,9 @@ The server runs as a **single process** with the vLLM engine embedded directly i
 │  └──────────┬─────────────────┘  │
 │             │                    │
 │  ┌──────────▼─────────────────┐  │
-│  │   SNAC Decoder (CUDA)      │  │
+│  │   SNAC Decoder             │  │
 │  │   Token → PCM Audio        │  │
+│  │   (SNAC_DEVICE: cpu/cuda)  │  │
 │  └──────────┬─────────────────┘  │
 │             │                    │
 │  ┌──────────▼─────────────────┐  │
@@ -199,14 +177,13 @@ svara-tts-inference/
 ├── tts_engine/             # Core TTS engine
 │   ├── orchestrator.py     # TTS pipeline orchestration
 │   ├── transports.py       # Embedded vLLM transport
-│   ├── buffers.py          # Audio prebuffering
+│   ├── buffers.py          # Audio prebuffering + crossfade
 │   ├── mapper.py           # Token-to-SNAC mapping
 │   ├── codec.py            # SNAC encoder/decoder
 │   ├── voice_config.py     # Voice profiles
 │   ├── encoder.py          # Text-to-token encoding
 │   ├── constants.py        # Token IDs and special tokens
-│   ├── timing.py           # Performance tracking
-│   └── utils.py            # Utilities
+│   └── utils.py            # Utilities (chunking, audio processing)
 ├── assets/                 # Voice config YAML files
 ├── examples/               # Example scripts
 │   └── api_client.py       # API client examples
@@ -269,6 +246,6 @@ If you use Svara TTS in your research, please cite:
 
 ## Links
 
-- 🤗 [Model on Hugging Face](https://huggingface.co/kenpath/svara-tts-v1)
-- 🚀 [Try Demo on Hugging Face Spaces](https://huggingface.co/spaces/kenpath/svara-tts)
-- 📓 [Colab Notebook](https://colab.research.google.com/drive/15YxFo1DzdQNbFUIZ1HJA4AN4oHqKxGtg)
+- [Model on Hugging Face](https://huggingface.co/kenpath/svara-tts-v1)
+- [Try Demo on Hugging Face Spaces](https://huggingface.co/spaces/kenpath/svara-tts)
+- [Colab Notebook](https://colab.research.google.com/drive/15YxFo1DzdQNbFUIZ1HJA4AN4oHqKxGtg)

@@ -97,18 +97,7 @@ curl http://localhost:8080/health
 # List available voices
 curl http://localhost:8080/v1/voices
 
-# Test text-to-speech (streaming, MP3 output)
-curl -N -X POST http://localhost:8080/v1/text-to-speech \
-  -H "Content-Type: application/json" \
-  -d '{
-    "text": "नमस्ते, मैं स्वरा टीटीएस हूं।",
-    "voice": "Hindi (Male)",
-    "response_format": "mp3",
-    "stream": true
-  }' \
-  --output audio.mp3
-
-# Test OpenAI-compatible endpoint
+# Test text-to-speech
 curl -X POST http://localhost:8080/v1/audio/speech \
   -H "Content-Type: application/json" \
   -d '{
@@ -143,7 +132,7 @@ The `.env` file contains all configurable parameters:
 |----------|---------|-------------|
 | `API_PORT` | `8080` | FastAPI server port |
 | `API_HOST` | `0.0.0.0` | FastAPI bind address |
-| `TTS_DEVICE` | `cuda` | Device for SNAC decoder: `cuda`, `mps`, `cpu`, or empty for auto-detect |
+| `SNAC_DEVICE` | `cpu` | Device for SNAC decoder: `cuda`, `mps`, `cpu`, or empty for auto-detect |
 
 #### Hugging Face Configuration
 
@@ -255,10 +244,7 @@ supervisorctl restart fastapi
 |----------|--------|-------------|
 | `/health` | GET | Health check |
 | `/v1/voices` | GET | List available voices |
-| `/v1/text-to-speech` | POST | Full-featured TTS (JSON or multipart) |
-| `/v1/audio/speech` | POST | OpenAI-compatible TTS |
-| `/debug/timing` | GET | Performance timing statistics |
-| `/debug/timing/reset` | POST | Reset timing stats |
+| `/v1/audio/speech` | POST | OpenAI-compatible TTS (supports streaming, zero-shot cloning) |
 
 ### 1. Health Check
 
@@ -324,103 +310,7 @@ curl "http://localhost:8080/v1/voices?model_id=svara-tts-v1"
 | Nepali | `ne_male` | `ne_female` |
 | Sanskrit | `sa_male` | `sa_female` |
 
-### 3. Text-to-Speech (`/v1/text-to-speech`)
-
-The full-featured endpoint supporting streaming, multiple formats, generation parameters, and zero-shot voice cloning.
-
-**Streaming (default):**
-
-```bash
-curl -N -X POST http://localhost:8080/v1/text-to-speech \
-  -H "Content-Type: application/json" \
-  -d '{
-    "text": "नमस्ते दुनिया",
-    "voice": "Hindi (Male)",
-    "response_format": "opus",
-    "stream": true
-  }' \
-  --output audio.opus
-```
-
-**Non-streaming with format conversion:**
-
-```bash
-curl -X POST http://localhost:8080/v1/text-to-speech \
-  -H "Content-Type: application/json" \
-  -d '{
-    "text": "Hello world",
-    "voice": "English (Female)",
-    "response_format": "wav",
-    "stream": false
-  }' \
-  --output audio.wav
-```
-
-**With generation parameters:**
-
-```bash
-curl -N -X POST http://localhost:8080/v1/text-to-speech \
-  -H "Content-Type: application/json" \
-  -d '{
-    "text": "This is a test with custom parameters",
-    "voice": "English (Male)",
-    "response_format": "mp3",
-    "temperature": 0.8,
-    "top_p": 0.95,
-    "repetition_penalty": 1.2,
-    "max_tokens": 4096
-  }' \
-  --output audio.mp3
-```
-
-**Zero-shot voice cloning (JSON with base64 audio):**
-
-```bash
-# Encode reference audio to base64
-REF_AUDIO=$(base64 -w0 reference.wav)
-
-curl -X POST http://localhost:8080/v1/text-to-speech \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"text\": \"Hello, this should sound like the reference.\",
-    \"reference_audio\": \"${REF_AUDIO}\",
-    \"reference_transcript\": \"Original transcript of reference audio.\",
-    \"response_format\": \"wav\",
-    \"stream\": false
-  }" \
-  --output cloned.wav
-```
-
-**Zero-shot voice cloning (multipart form with file upload):**
-
-```bash
-curl -X POST http://localhost:8080/v1/text-to-speech \
-  -F "text=Hello, this should sound like the reference." \
-  -F "reference_audio=@reference.wav" \
-  -F "reference_transcript=Original transcript of reference audio." \
-  -F "response_format=wav" \
-  -F "stream=false" \
-  --output cloned.wav
-```
-
-#### Request Parameters
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `text` | string | Yes | — | Text to synthesize (1-5000 chars) |
-| `voice` | string | Conditional | — | Voice name (e.g., `Hindi (Male)`). Required unless using zero-shot. |
-| `reference_audio` | string/file | No | `null` | Base64 audio (JSON) or file upload (multipart) for zero-shot cloning |
-| `reference_transcript` | string | No | `null` | Transcript of reference audio (improves cloning quality) |
-| `model_id` | string | No | `svara-tts-v1` | Model to use |
-| `stream` | boolean | No | `true` | Stream audio response |
-| `response_format` | string | No | `opus` | Output format: `mp3`, `opus`, `aac`, `wav`, `pcm` |
-| `temperature` | float | No | `0.75` | Sampling temperature (0.0-2.0) |
-| `top_p` | float | No | `0.9` | Nucleus sampling (0.0-1.0) |
-| `top_k` | int | No | `40` | Top-k sampling |
-| `repetition_penalty` | float | No | `1.1` | Repetition penalty (1.0-2.0) |
-| `max_tokens` | int | No | `2048` | Max tokens to generate (1-4096) |
-
-### 4. OpenAI-Compatible Endpoint (`/v1/audio/speech`)
+### 3. OpenAI-Compatible Endpoint (`/v1/audio/speech`)
 
 Drop-in replacement for OpenAI's TTS API. Works with the OpenAI Python SDK and any OpenAI-compatible client.
 
@@ -514,39 +404,6 @@ fs.writeFileSync("output.mp3", buffer);
 | `speed` | float | No | `1.0` | Playback speed 0.5-2.0 (accepted, not yet implemented) |
 | `stream` | boolean | No | `false` | Stream audio response |
 
-### 5. Performance Timing
-
-```bash
-# Get timing stats
-curl http://localhost:8080/debug/timing
-
-# Reset timing stats
-curl -X POST http://localhost:8080/debug/timing/reset
-```
-
-**Example response:**
-```json
-{
-  "timing_stats": {
-    "vLLM.astream": {
-      "calls": 5,
-      "total_ms": 2340.12,
-      "avg_ms": 468.02,
-      "min_ms": 312.45,
-      "max_ms": 623.78
-    },
-    "Orchestrator.astream_one": {
-      "calls": 5,
-      "total_ms": 2890.56,
-      "avg_ms": 578.11,
-      "min_ms": 398.23,
-      "max_ms": 756.34
-    }
-  },
-  "note": "All times in milliseconds"
-}
-```
-
 ### Response Headers
 
 For audio responses:
@@ -562,10 +419,10 @@ For audio responses:
 import requests
 
 response = requests.post(
-    "http://localhost:8080/v1/text-to-speech",
+    "http://localhost:8080/v1/audio/speech",
     json={
-        "text": "नमस्ते",
-        "voice": "Hindi (Male)",
+        "input": "नमस्ते",
+        "voice": "hi_male",
         "response_format": "mp3",
         "stream": True,
     },
@@ -583,12 +440,11 @@ with open("output.mp3", "wb") as f:
 import requests
 
 response = requests.post(
-    "http://localhost:8080/v1/text-to-speech",
+    "http://localhost:8080/v1/audio/speech",
     json={
-        "text": "Hello world",
-        "voice": "English (Female)",
+        "input": "Hello world",
+        "voice": "en_female",
         "response_format": "wav",
-        "stream": False,
     },
 )
 
@@ -605,10 +461,10 @@ async def synthesize():
     async with httpx.AsyncClient() as client:
         async with client.stream(
             "POST",
-            "http://localhost:8080/v1/text-to-speech",
+            "http://localhost:8080/v1/audio/speech",
             json={
-                "text": "Async streaming example",
-                "voice": "English (Male)",
+                "input": "Async streaming example",
+                "voice": "en_male",
                 "response_format": "opus",
                 "stream": True,
             },
@@ -671,11 +527,6 @@ docker-compose run svara-tts-api \
 ```
 
 #### 4. Slow Response Times
-
-**Check timing stats:**
-```bash
-curl http://localhost:8080/debug/timing
-```
 
 **Enable quantization for faster inference:**
 ```bash
@@ -789,12 +640,6 @@ watch -n 1 nvidia-smi
 
 # Monitor container stats
 docker stats svara-tts-api
-```
-
-**Performance monitoring:**
-```bash
-# Get per-function timing stats
-curl http://localhost:8080/debug/timing | python3 -m json.tool
 ```
 
 ### Scaling

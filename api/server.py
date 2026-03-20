@@ -42,7 +42,7 @@ from api.models import VoiceResponse, VoicesResponse, OpenAISpeechRequest
 
 VLLM_MODEL = os.getenv("VLLM_MODEL", "kenpath/svara-tts-v1")
 TOKENIZER_MODEL = os.getenv("TOKENIZER_MODEL", VLLM_MODEL)  # Defaults to VLLM_MODEL
-TTS_DEVICE = os.getenv("TTS_DEVICE", None)  # None = auto-detect (CUDA/MPS/CPU)
+SNAC_DEVICE = os.getenv("SNAC_DEVICE", None)  # None = auto-detect (CUDA/MPS/CPU). Device for SNAC audio decoder.
 VLLM_GPU_MEMORY_UTILIZATION = float(os.getenv("VLLM_GPU_MEMORY_UTILIZATION", "0.9"))
 VLLM_MAX_MODEL_LEN = int(os.getenv("VLLM_MAX_MODEL_LEN", "4096"))
 VLLM_TENSOR_PARALLEL_SIZE = int(os.getenv("VLLM_TENSOR_PARALLEL_SIZE", "1"))
@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI):
     print(f"🚀 Initializing Svara TTS API...")
     print(f"   Model: {VLLM_MODEL}")
     print(f"   Tokenizer Model: {TOKENIZER_MODEL}")
-    print(f"   Device: {TTS_DEVICE or 'auto-detect'}")
+    print(f"   Device: {SNAC_DEVICE or 'auto-detect'}")
     print(f"   dtype: {VLLM_DTYPE}, quantization: {VLLM_QUANTIZATION}")
     print(f"   max_model_len: {VLLM_MAX_MODEL_LEN}, enforce_eager: {VLLM_ENFORCE_EAGER}")
     print(f"   HF_TOKEN: {'set' if os.getenv('HF_TOKEN') else 'not set'}")
@@ -91,7 +91,7 @@ async def lifespan(app: FastAPI):
         transport=transport,
         model=VLLM_MODEL,
         speaker_id="English (Male)",  # Default, will be overridden per request
-        device=TTS_DEVICE,
+        device=SNAC_DEVICE,
         prebuffer_seconds=0.5,
         concurrent_decode=True,
     )
@@ -284,10 +284,10 @@ async def openai_speech(req: OpenAISpeechRequest):
     audio_tokens = None
     if req.reference_audio:
         logger.info(f"Loading reference audio from bytes ({len(req.reference_audio)} bytes)")
-        audio_tensor, sample_rate = load_audio_from_bytes(req.reference_audio, device=TTS_DEVICE)
+        audio_tensor, sample_rate = load_audio_from_bytes(req.reference_audio, device=SNAC_DEVICE)
         logger.info(f"Audio loaded: shape={audio_tensor.shape}, sr={sample_rate}Hz")
 
-        codec = SNACCodec(device=TTS_DEVICE)
+        codec = SNACCodec(device=SNAC_DEVICE)
         audio_tokens = codec.encode_audio(audio_tensor, input_sample_rate=sample_rate, add_token_offsets=True)
         logger.info(f"Audio tokens encoded: {len(audio_tokens)} tokens")
 

@@ -94,7 +94,11 @@ class SvaraTTSOrchestrator:
             self.snac_window_size = int(os.getenv("SNAC_WINDOW_SIZE", "28"))
 
         # Long-text chunking config
-        self.max_chunk_chars = 1000    # Split text longer than this
+        # Each SNAC frame = 7 tokens ≈ 10ms audio. With max_tokens=2048,
+        # the model can produce ~292 frames ≈ 3s of speech. At ~15 chars/s
+        # speaking rate, that's ~45 chars. Use 200 chars for safety margin
+        # and to allow for varying speech rates across languages.
+        self.max_chunk_chars = 200
         self.crossfade_ms = 50         # Crossfade overlap between chunks
 
         logger.info(f"Orchestrator: max_workers={self.max_workers}, "
@@ -112,32 +116,59 @@ class SvaraTTSOrchestrator:
 
         For texts longer than max_chunk_chars, splits at sentence boundaries
         and crossfades between chunks for smooth audio stitching.
+        Streams audio progressively within each chunk — only holds back
+        the last overlap_ms for crossfading with the next chunk.
         """
         chunks = chunk_text(text, max_len=self.max_chunk_chars)
 
         if len(chunks) <= 1:
-            # Short text — no chunking needed, stream directly
             yield from self._stream_one(text, audio_reference=audio_reference, reference_text=reference_text, speaker_id=speaker_id, **gen_kwargs)
             return
 
-        # Long text — synthesize each chunk, crossfade between them
         logger.info(f"Long text ({len(text)} chars) split into {len(chunks)} chunks")
-        prev_audio: Optional[bytes] = None
+        overlap_bytes = int(self.codec.sample_rate * self.crossfade_ms / 1000) * 2  # 2 bytes per sample
+        prev_tail: Optional[bytes] = None
 
         for chunk_text_str in chunks:
-            chunk_pcm = b"".join(
-                self._stream_one(chunk_text_str, audio_reference=audio_reference, reference_text=reference_text, speaker_id=speaker_id, **gen_kwargs)
-            )
-            if not chunk_pcm:
-                continue
+            is_last_chunk = (chunk_text_str is chunks[-1])
+            trailing = bytearray()
 
-            if prev_audio is None:
-                prev_audio = chunk_pcm
+            for b in self._stream_one(chunk_text_str, audio_reference=audio_reference, reference_text=reference_text, speaker_id=speaker_id, **gen_kwargs):
+                trailing.extend(b)
+
+                if prev_tail is not None:
+                    head = bytes(trailing[:overlap_bytes]) if len(trailing) >= overlap_bytes else bytes(trailing)
+                    if len(head) >= overlap_bytes:
+                        blended = crossfade_pcm(prev_tail, head,
+                                                overlap_ms=self.crossfade_ms, sample_rate=self.codec.sample_rate)
+                        yield blended
+                        trailing = bytearray(trailing[overlap_bytes:])
+                        prev_tail = None
+                    continue
+
+                if len(trailing) > overlap_bytes:
+                    to_yield = bytes(trailing[:-overlap_bytes])
+                    trailing = bytearray(trailing[-overlap_bytes:])
+                    yield to_yield
+
+            if prev_tail is not None:
+                if trailing:
+                    blended = crossfade_pcm(prev_tail, bytes(trailing),
+                                            overlap_ms=self.crossfade_ms, sample_rate=self.codec.sample_rate)
+                    yield blended
+                else:
+                    yield prev_tail
+                prev_tail = None
+                trailing = bytearray()
+
+            if not is_last_chunk and len(trailing) > overlap_bytes:
+                yield bytes(trailing[:-overlap_bytes])
+                prev_tail = bytes(trailing[-overlap_bytes:])
+            elif not is_last_chunk:
+                prev_tail = bytes(trailing) if trailing else None
             else:
-                prev_audio = crossfade_pcm(prev_audio, chunk_pcm, overlap_ms=self.crossfade_ms, sample_rate=self.codec.sample_rate)
-
-        if prev_audio:
-            yield prev_audio
+                if trailing:
+                    yield bytes(trailing)
 
     def _stream_one(self,
                     text: str,
@@ -207,6 +238,8 @@ class SvaraTTSOrchestrator:
 
         For texts longer than max_chunk_chars, splits at sentence boundaries
         and crossfades between chunks for smooth audio stitching.
+        Streams audio progressively within each chunk — only holds back
+        the last overlap_ms for crossfading with the next chunk.
         """
         chunks = chunk_text(text, max_len=self.max_chunk_chars)
 
@@ -215,25 +248,61 @@ class SvaraTTSOrchestrator:
                 yield b
             return
 
-        # Long text — synthesize each chunk, crossfade between them
         logger.info(f"Long text ({len(text)} chars) split into {len(chunks)} chunks")
-        prev_audio: Optional[bytes] = None
+        overlap_bytes = int(self.codec.sample_rate * self.crossfade_ms / 1000) * 2  # 2 bytes per sample
+        prev_tail: Optional[bytes] = None
+        is_first_chunk = True
 
         for chunk_text_str in chunks:
-            chunk_parts = []
+            is_last_chunk = (chunk_text_str is chunks[-1])
+            # Accumulate a trailing buffer per chunk so we can hold back overlap_bytes
+            trailing = bytearray()
+
             async for b in self._astream_one(chunk_text_str, audio_reference=audio_reference, reference_text=reference_text, speaker_id=speaker_id, **gen_kwargs):
-                chunk_parts.append(b)
-            chunk_pcm = b"".join(chunk_parts)
-            if not chunk_pcm:
-                continue
+                trailing.extend(b)
 
-            if prev_audio is None:
-                prev_audio = chunk_pcm
+                # For the first piece of the first non-first chunk, crossfade with prev_tail
+                if prev_tail is not None:
+                    head = bytes(trailing[:overlap_bytes]) if len(trailing) >= overlap_bytes else bytes(trailing)
+                    if len(head) >= overlap_bytes:
+                        blended = crossfade_pcm(prev_tail, head,
+                                                overlap_ms=self.crossfade_ms, sample_rate=self.codec.sample_rate)
+                        yield blended
+                        trailing = bytearray(trailing[overlap_bytes:])
+                        prev_tail = None
+                    # else: keep accumulating until we have enough for crossfade
+                    continue
+
+                # Stream the middle: yield everything except the last overlap_bytes
+                if len(trailing) > overlap_bytes:
+                    to_yield = bytes(trailing[:-overlap_bytes])
+                    trailing = bytearray(trailing[-overlap_bytes:])
+                    yield to_yield
+
+            # After chunk finishes, handle any remaining crossfade that didn't have enough data
+            if prev_tail is not None:
+                # Chunk was very short, just crossfade what we have
+                if trailing:
+                    blended = crossfade_pcm(prev_tail, bytes(trailing),
+                                            overlap_ms=self.crossfade_ms, sample_rate=self.codec.sample_rate)
+                    yield blended
+                else:
+                    yield prev_tail
+                prev_tail = None
+                trailing = bytearray()
+
+            # Hold back the tail for crossfading with the next chunk
+            if not is_last_chunk and len(trailing) > overlap_bytes:
+                yield bytes(trailing[:-overlap_bytes])
+                prev_tail = bytes(trailing[-overlap_bytes:])
+            elif not is_last_chunk:
+                prev_tail = bytes(trailing) if trailing else None
             else:
-                prev_audio = crossfade_pcm(prev_audio, chunk_pcm, overlap_ms=self.crossfade_ms, sample_rate=self.codec.sample_rate)
+                # Last chunk — yield everything
+                if trailing:
+                    yield bytes(trailing)
 
-        if prev_audio:
-            yield prev_audio
+            is_first_chunk = False
 
     async def _astream_one(self,
                            text: str,
