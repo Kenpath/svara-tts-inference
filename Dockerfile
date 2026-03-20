@@ -86,6 +86,7 @@ FROM app-deps AS final
 # Copy application code
 COPY tts_engine/ ./tts_engine/
 COPY api/ ./api/
+COPY assets/ ./assets/
 COPY scripts/ ./scripts/
 COPY supervisord.conf /etc/supervisor/conf.d/svara-tts.conf
 
