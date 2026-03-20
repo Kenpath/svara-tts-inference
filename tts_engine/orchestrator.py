@@ -13,7 +13,6 @@ from .encoder import svara_text_to_tokens
 from .utils import create_speaker_id
 from .buffers import AudioBuffer, SyncFuture, crossfade_pcm
 from .utils import chunk_text
-from .timing import track_time
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +139,6 @@ class SvaraTTSOrchestrator:
         if prev_audio:
             yield prev_audio
 
-    @track_time("Orchestrator.stream_one")
     def _stream_one(self,
                     text: str,
                     audio_reference: Optional[List[int]] = None,
@@ -237,7 +235,6 @@ class SvaraTTSOrchestrator:
         if prev_audio:
             yield prev_audio
 
-    @track_time("Orchestrator.astream_one")
     async def _astream_one(self,
                            text: str,
                            audio_reference: Optional[List[int]] = None,

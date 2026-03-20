@@ -2,7 +2,6 @@
 from __future__ import annotations
 import re
 from typing import List, Optional, Iterable
-from .timing import track_time
 
 _TOKEN_RE = re.compile(r"<custom_token_(\d+)>")
 
@@ -57,7 +56,6 @@ class SvaraMapper:
         self.codes: List[int] = []
         self.good = 0
 
-    @track_time("Mapper.feed_raw", log_level="DEBUG")
     def feed_raw(self, raw: int) -> Optional[List[int]]:
         """Feed a raw token number. Returns a window when ready, else None."""
         code = raw_to_code_id(raw, self.good)

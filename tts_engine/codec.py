@@ -6,7 +6,6 @@ import torch
 import os
 from transformers import AutoTokenizer
 from .utils import resample_audio
-from .timing import track_time
 from .constants import AUDIO_TOKEN_OFFSETS
 
 
@@ -112,7 +111,6 @@ class SNACCodec:
         # Get or load model from cache
         self.model = _get_or_load_snac_model(device, model_name)
 
-    @track_time("SNAC.encode_audio")
     def encode_audio(
         self,
         audio: torch.Tensor,
@@ -218,7 +216,6 @@ class SNACCodec:
         
         return all_codes
     
-    @track_time("SNAC.decode_window")
     def decode_window(self, window: List[int]) -> bytes:
         """
         Decode a sliding window of Svara-TTS codes into PCM16 bytes.

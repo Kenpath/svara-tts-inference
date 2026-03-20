@@ -31,7 +31,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from tts_engine.voice_config import get_all_voices, get_speaker_id
 from tts_engine.orchestrator import SvaraTTSOrchestrator
 from tts_engine.transports import VLLMEmbeddedTransport
-from tts_engine.timing import get_timing_stats, reset_timing_stats
 from tts_engine.utils import load_audio_from_bytes
 from tts_engine.codec import SNACCodec
 from api.models import VoiceResponse, VoicesResponse, OpenAISpeechRequest
@@ -354,57 +353,6 @@ async def openai_speech(req: OpenAISpeechRequest):
                 "Content-Length": str(len(complete_audio)),
             }
         )
-
-
-# ============================================================================
-# Debug Endpoints
-# ============================================================================
-
-@app.get("/debug/timing")
-async def get_timing():
-    """
-    Get timing statistics for all tracked functions.
-    
-    Returns detailed performance metrics including call counts, average times,
-    min/max times for each tracked function.
-    """
-    stats = get_timing_stats()
-    
-    # Convert to more readable format
-    formatted_stats = {}
-    for func_name, data in stats.items():
-        # Skip functions that haven't been called yet
-        if data["count"] == 0:
-            continue
-            
-        avg_time = data["total_time"] / data["count"]
-        # Handle inf values (when count is 0)
-        min_time = data["min_time"] if data["min_time"] != float('inf') else 0
-        max_time = data["max_time"] if data["max_time"] != float('-inf') else 0
-        
-        formatted_stats[func_name] = {
-            "calls": data["count"],
-            "total_ms": round(data["total_time"] * 1000, 2),
-            "avg_ms": round(avg_time * 1000, 2),
-            "min_ms": round(min_time * 1000, 2),
-            "max_ms": round(max_time * 1000, 2),
-        }
-    
-    return {
-        "timing_stats": formatted_stats,
-        "note": "All times in milliseconds"
-    }
-
-
-@app.post("/debug/timing/reset")
-async def reset_timing():
-    """
-    Reset all timing statistics.
-    
-    Clears all accumulated timing data. Useful for starting fresh measurements.
-    """
-    reset_timing_stats()
-    return {"status": "success", "message": "Timing statistics have been reset"}
 
 
 # ============================================================================

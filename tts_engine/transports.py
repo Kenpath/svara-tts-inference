@@ -6,7 +6,6 @@ import threading
 import logging
 from typing import Iterator, AsyncIterator, Optional, Dict, Any
 
-from .timing import track_time
 from .constants import END_OF_SPEECH
 
 logger = logging.getLogger(__name__)
@@ -68,7 +67,6 @@ class VLLMEmbeddedTransport:
             )
         return self._engine
 
-    @track_time("vLLM.astream")
     async def astream(self, prompt: str, **gen_kwargs) -> AsyncIterator[str]:
         """Stream text deltas from the embedded vLLM engine."""
         from vllm.sampling_params import SamplingParams
@@ -101,7 +99,6 @@ class VLLMEmbeddedTransport:
             await self.engine.abort(request_id)
             raise
 
-    @track_time("vLLM.stream")
     def stream(self, prompt: str, **gen_kwargs) -> Iterator[str]:
         """Sync wrapper around astream() for the sync orchestrator path."""
 
