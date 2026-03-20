@@ -40,38 +40,37 @@ def raw_to_code_id(raw_num: int, good_idx: int) -> int:
 class SvaraMapper:
     """
     Aggregates code ids, keeping track of good token count.
-    Emits a 28-code sliding window every time good % 7 == 0 and good > 27.
-    
+    Emits a sliding window of `window_size` codes every time a full frame
+    boundary is reached and enough codes have accumulated.
+
+    Default window_size=28 (4 frames). Can be set to 56 (8 frames) for
+    fewer, larger decode calls — trades TTFB for throughput.
+
     Args:
-        codes: The list of code ids.
-        good: The count of good tokens.
+        window_size: Number of codes per emitted window. Must be a multiple
+                     of 7. Default 28 (4 frames).
     """
-    def __init__(self):
+    def __init__(self, window_size: int = 28):
+        if window_size < 7 or window_size % 7 != 0:
+            raise ValueError(f"window_size must be a multiple of 7, got {window_size}")
+        self.window_size = window_size
         self.codes: List[int] = []
         self.good = 0
 
     @track_time("Mapper.feed_raw", log_level="DEBUG")
     def feed_raw(self, raw: int) -> Optional[List[int]]:
-        """Feed a raw number to the mapper.
-        
-        Args:
-            raw: The raw number to feed.
-        """
+        """Feed a raw token number. Returns a window when ready, else None."""
         code = raw_to_code_id(raw, self.good)
         if code <= 0:
             return None
         self.codes.append(code)
         self.good += 1
-        if self.good % 7 == 0 and self.good > 27:
-            return self.codes[-28:]
+        if self.good % 7 == 0 and self.good >= self.window_size:
+            return self.codes[-self.window_size:]
         return None
 
     def feed_text(self, token_text: str) -> List[List[int]]:
-        """Return zero or more ready 28-code windows from a token_text that may contain multiple custom tokens.
-        
-        Args:
-            token_text: The text string to feed.
-        """
+        """Return zero or more ready windows from a token_text."""
         out: List[List[int]] = []
         for n in extract_custom_token_numbers(token_text):
             win = self.feed_raw(n)
