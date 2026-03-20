@@ -1,6 +1,46 @@
 
 from __future__ import annotations
 from typing import Optional
+import numpy as np
+
+
+def crossfade_pcm(a: bytes, b: bytes, overlap_ms: int = 50, sample_rate: int = 24000) -> bytes:
+    """
+    Crossfade two PCM16 mono byte buffers.
+
+    Applies a linear fade-out to the tail of `a` and fade-in to the head of `b`,
+    then blends them. Returns the stitched result: a_head + blended_overlap + b_tail.
+
+    Args:
+        a: First PCM16 mono buffer.
+        b: Second PCM16 mono buffer.
+        overlap_ms: Crossfade duration in milliseconds.
+        sample_rate: Audio sample rate.
+
+    Returns:
+        Stitched PCM16 mono bytes.
+    """
+    overlap_samples = int(sample_rate * overlap_ms / 1000)
+
+    arr_a = np.frombuffer(a, dtype=np.int16).astype(np.float32)
+    arr_b = np.frombuffer(b, dtype=np.int16).astype(np.float32)
+
+    # If either buffer is shorter than the overlap, just concatenate
+    if len(arr_a) < overlap_samples or len(arr_b) < overlap_samples:
+        return a + b
+
+    fade_out = np.linspace(1.0, 0.0, overlap_samples, dtype=np.float32)
+    fade_in = np.linspace(0.0, 1.0, overlap_samples, dtype=np.float32)
+
+    blended = arr_a[-overlap_samples:] * fade_out + arr_b[:overlap_samples] * fade_in
+
+    result = np.concatenate([
+        arr_a[:-overlap_samples],
+        blended,
+        arr_b[overlap_samples:],
+    ])
+
+    return np.clip(result, -32768, 32767).astype(np.int16).tobytes()
 
 
 class AudioBuffer:

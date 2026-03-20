@@ -19,7 +19,7 @@ try:
 except ImportError:
     pass
 
-from fastapi import FastAPI, HTTPException, Response, File, UploadFile, Form
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import StreamingResponse
 
 
@@ -33,8 +33,8 @@ from tts_engine.orchestrator import SvaraTTSOrchestrator
 from tts_engine.transports import VLLMEmbeddedTransport
 from tts_engine.timing import get_timing_stats, reset_timing_stats
 from tts_engine.utils import load_audio_from_bytes
-from tts_engine.codec import SNACCodec, get_or_load_tokenizer
-from api.models import VoiceResponse, VoicesResponse, TTSRequest, OpenAISpeechRequest
+from tts_engine.codec import SNACCodec
+from api.models import VoiceResponse, VoicesResponse, OpenAISpeechRequest
 
 
 # ============================================================================
@@ -95,7 +95,6 @@ async def lifespan(app: FastAPI):
         device=TTS_DEVICE,
         prebuffer_seconds=0.5,
         concurrent_decode=True,
-        max_workers=2,
     )
 
     print(f"✓ Orchestrator initialized")
@@ -256,203 +255,55 @@ async def get_voices(model_id: Optional[str] = None):
     )
 
 
-@app.post("/v1/text-to-speech")
-async def text_to_speech(
-    # Accept both JSON (via TTSRequest) and multipart/form-data
-    text: Optional[str] = Form(None),
-    voice: Optional[str] = Form(None),
-    reference_audio: Optional[UploadFile] = File(None),
-    reference_transcript: Optional[str] = Form(None),
-    model_id: str = Form(default="svara-tts-v1"),
-    stream: bool = Form(default=True),
-    response_format: str = Form(default="opus"),  # Default to opus for streaming
-    temperature: Optional[float] = Form(None),
-    top_p: Optional[float] = Form(None),
-    top_k: Optional[int] = Form(None),
-    repetition_penalty: Optional[float] = Form(None),
-    max_tokens: Optional[int] = Form(None),
-    # JSON body (used when Content-Type is application/json)
-    json_body: Optional[TTSRequest] = None,
-):
-    """
-    Convert text to speech with streaming or non-streaming response.
-    
-    Supports two modes:
-    1. Standard TTS: Provide 'voice' parameter
-    2. Zero-shot cloning: Provide 'reference_audio' file (and optionally 'reference_transcript')
-    
-    Accepts both:
-    - JSON (Content-Type: application/json) with base64-encoded reference_audio
-    - Multipart form data (Content-Type: multipart/form-data) with file upload
-    
-    Returns:
-        Audio bytes in requested format (streaming or complete)
-    """
-    # Handle both JSON and multipart/form-data
-    if json_body is not None:
-        # JSON request
-        request_text = json_body.text
-        request_voice = json_body.voice
-        request_reference_audio_bytes = json_body.reference_audio
-        request_reference_transcript = json_body.reference_transcript
-        request_model_id = json_body.model_id
-        request_stream = json_body.stream
-        request_response_format = json_body.response_format
-        request_temperature = json_body.temperature
-        request_top_p = json_body.top_p
-        request_top_k = json_body.top_k
-        request_repetition_penalty = json_body.repetition_penalty
-        request_max_tokens = json_body.max_tokens
-    else:
-        # Multipart form data request
-        if text is None:
-            raise HTTPException(status_code=400, detail="'text' field is required")
-        request_text = text
-        request_voice = voice
-        request_reference_transcript = reference_transcript
-        request_model_id = model_id
-        request_stream = stream
-        request_response_format = response_format
-        request_temperature = temperature
-        request_top_p = top_p
-        request_top_k = top_k
-        request_repetition_penalty = repetition_penalty
-        request_max_tokens = max_tokens
-        
-        # Handle file upload for reference_audio
-        if reference_audio is not None:
-            request_reference_audio_bytes = await reference_audio.read()
-        else:
-            request_reference_audio_bytes = None
-    
-    # Validate that either voice or reference_audio is provided
-    if not request_voice and not request_reference_audio_bytes:
-        raise HTTPException(
-            status_code=400,
-            detail="Either 'voice' or 'reference_audio' must be provided"
-        )
-    
-    # Determine mode: zero-shot or standard
-    zero_shot_mode = request_reference_audio_bytes is not None
-    audio_tokens = None
-    
-    if zero_shot_mode:
-        logger.info(f"Loading reference audio from bytes ({len(request_reference_audio_bytes)} bytes)")
-        audio_tensor, sample_rate = load_audio_from_bytes(request_reference_audio_bytes, device=TTS_DEVICE)
-        logger.info(f"Audio loaded: shape={audio_tensor.shape}, sr={sample_rate}Hz, min={audio_tensor.min():.3f}, max={audio_tensor.max():.3f}")
-        
-        # Encode audio to SNAC tokens
-        logger.info(f"Encoding audio to SNAC tokens")
-        codec = SNACCodec(device=TTS_DEVICE)
-        
-        # Encode with offsets (128266+) for use in prompt
-        audio_tokens = codec.encode_audio(audio_tensor, input_sample_rate=sample_rate, add_token_offsets=True)
-        logger.info(f"Audio tokens encoded to {len(audio_tokens)} tokens")
-        logger.info(f"First 10 tokens: {audio_tokens[:10]}")
-        logger.info(f"Last 10 tokens: {audio_tokens[-10:]}")
-    else:
-        # Standard TTS mode
-        if not request_voice:
-            raise HTTPException(
-                status_code=400,
-                detail="'voice' parameter is required for standard TTS mode"
-            )
-    
-    # Use global orchestrator (already initialized, SNAC model cached)
-    request_orchestrator = orchestrator
-    
-    # Build generation kwargs from request parameters
-    gen_kwargs = {}
-    if request_temperature is not None:
-        gen_kwargs["temperature"] = request_temperature
-    if request_top_p is not None:
-        gen_kwargs["top_p"] = request_top_p
-    if request_top_k is not None:
-        gen_kwargs["top_k"] = request_top_k
-    if request_repetition_penalty is not None:
-        gen_kwargs["repetition_penalty"] = request_repetition_penalty
-    if request_max_tokens is not None:
-        gen_kwargs["max_tokens"] = request_max_tokens
-    
-    # Map format to media type
-    format_media_types = {
-        "mp3": "audio/mpeg",
-        "opus": "audio/ogg",
-        "aac": "audio/aac",
-        "wav": "audio/wav",
-        "pcm": "audio/pcm",
-    }
-    media_type = format_media_types.get(request_response_format, "audio/pcm")
-    
-    # Create async generator for raw PCM
-    pcm_generator = request_orchestrator.astream(
-        text=request_text,
-        audio_reference=audio_tokens,
-        reference_text=request_reference_transcript,
-        speaker_id=request_voice,
-        **gen_kwargs
-    )
-    
-    # Convert to requested format
-    audio_stream = audio_stream_converter(
-        pcm_generator,
-        format=request_response_format,
-    )
-    
-    # Handle streaming vs non-streaming
-    if request_stream:
-        return StreamingResponse(
-            audio_stream,
-            media_type=media_type,
-            headers={
-                "Content-Type": media_type,
-                "X-Sample-Rate": "24000",
-                "X-Channels": "1",
-            }
-        )
-    else:
-        # Non-streaming: collect all audio chunks
-        try:
-            audio_chunks = []
-            async for chunk in audio_stream:
-                audio_chunks.append(chunk)
-            
-            complete_audio = b"".join(audio_chunks)
-            
-            return Response(
-                content=complete_audio,
-                media_type=media_type,
-                headers={
-                    "Content-Type": media_type,
-                    "X-Sample-Rate": "24000",
-                    "X-Channels": "1",
-                    "Content-Length": str(len(complete_audio)),
-                }
-            )
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error generating audio: {str(e)}"
-            )
-
-
 @app.post("/v1/audio/speech")
 async def openai_speech(req: OpenAISpeechRequest):
     """
     OpenAI-compatible text-to-speech endpoint.
 
-    Drop-in replacement for OpenAI's /v1/audio/speech so clients using
-    the OpenAI TTS SDK work out of the box.
+    Drop-in replacement for OpenAI's /v1/audio/speech. Works with the OpenAI SDK
+    out of the box. Extended features (zero-shot cloning, generation params) can
+    be passed via the SDK's `extra_body` parameter.
+
+    Supports:
+    - Standard TTS with any available voice
+    - Zero-shot voice cloning via `reference_audio` (base64)
+    - Generation parameter tuning (temperature, top_p, etc.)
+    - Streaming and non-streaming responses
+    - Multiple audio formats (mp3, opus, aac, wav, pcm)
     """
-    # Map voice ID to speaker ID
-    try:
-        speaker_id = get_speaker_id(req.voice)
-    except ValueError:
-        available = [v.voice_id for v in get_all_voices()]
-        raise HTTPException(
-            status_code=400,
-            detail=f"Voice '{req.voice}' not found. Available voices: {available}"
-        )
+    # Resolve voice: try voice_id lookup first, then treat as direct speaker name
+    speaker_id = None
+    if not req.reference_audio:
+        try:
+            speaker_id = get_speaker_id(req.voice)
+        except ValueError:
+            # Maybe it's already a speaker name like "Hindi (Male)"
+            # Pass it through and let the orchestrator handle it
+            speaker_id = req.voice
+
+    # Zero-shot voice cloning
+    audio_tokens = None
+    if req.reference_audio:
+        logger.info(f"Loading reference audio from bytes ({len(req.reference_audio)} bytes)")
+        audio_tensor, sample_rate = load_audio_from_bytes(req.reference_audio, device=TTS_DEVICE)
+        logger.info(f"Audio loaded: shape={audio_tensor.shape}, sr={sample_rate}Hz")
+
+        codec = SNACCodec(device=TTS_DEVICE)
+        audio_tokens = codec.encode_audio(audio_tensor, input_sample_rate=sample_rate, add_token_offsets=True)
+        logger.info(f"Audio tokens encoded: {len(audio_tokens)} tokens")
+
+    # Build generation kwargs
+    gen_kwargs = {}
+    if req.temperature is not None:
+        gen_kwargs["temperature"] = req.temperature
+    if req.top_p is not None:
+        gen_kwargs["top_p"] = req.top_p
+    if req.top_k is not None:
+        gen_kwargs["top_k"] = req.top_k
+    if req.repetition_penalty is not None:
+        gen_kwargs["repetition_penalty"] = req.repetition_penalty
+    if req.max_tokens is not None:
+        gen_kwargs["max_tokens"] = req.max_tokens
 
     # Map format to media type
     format_media_types = {
@@ -464,9 +315,13 @@ async def openai_speech(req: OpenAISpeechRequest):
     }
     media_type = format_media_types.get(req.response_format, "audio/mpeg")
 
+    # Generate audio
     pcm_generator = orchestrator.astream(
         text=req.input,
+        audio_reference=audio_tokens,
+        reference_text=req.reference_transcript,
         speaker_id=speaker_id,
+        **gen_kwargs,
     )
 
     audio_stream = audio_stream_converter(
@@ -485,7 +340,6 @@ async def openai_speech(req: OpenAISpeechRequest):
             }
         )
     else:
-        # Non-streaming: collect all audio and return complete file (OpenAI default)
         audio_chunks = []
         async for chunk in audio_stream:
             audio_chunks.append(chunk)
