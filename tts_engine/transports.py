@@ -32,6 +32,7 @@ class VLLMEmbeddedTransport:
         dtype: str = "auto",
         quantization: Optional[str] = None,
         enforce_eager: bool = False,
+        attention_backend: Optional[str] = None,
     ):
         """Initialize the shared AsyncLLMEngine. Must be called once at startup."""
         if cls._engine is not None:
@@ -50,6 +51,7 @@ class VLLMEmbeddedTransport:
             dtype=dtype,
             quantization=quantization,
             enforce_eager=enforce_eager,
+            attention_backend=attention_backend,
         )
 
         cls._engine = AsyncLLMEngine.from_engine_args(engine_args)

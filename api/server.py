@@ -55,6 +55,7 @@ VLLM_TENSOR_PARALLEL_SIZE = int(os.getenv("VLLM_TENSOR_PARALLEL_SIZE", "1"))
 VLLM_QUANTIZATION = os.getenv("VLLM_QUANTIZATION") or None
 VLLM_ENFORCE_EAGER = os.getenv("VLLM_ENFORCE_EAGER", "false").lower() in ("true", "1", "yes")
 VLLM_DTYPE = os.getenv("VLLM_DTYPE", "auto")
+VLLM_ATTENTION_BACKEND = os.getenv("VLLM_ATTENTION_BACKEND") or None
 # HF_TOKEN is checked in codec.get_or_load_tokenizer() for private models
 
 # Global instances (initialized in lifespan)
@@ -86,6 +87,7 @@ async def lifespan(app: FastAPI):
         dtype=VLLM_DTYPE,
         quantization=VLLM_QUANTIZATION,
         enforce_eager=VLLM_ENFORCE_EAGER,
+        attention_backend=VLLM_ATTENTION_BACKEND,
     )
     logger.info("vLLM engine initialized (embedded)")
 
