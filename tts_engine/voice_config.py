@@ -44,7 +44,8 @@ def load_voices_from_yaml(path: str) -> List[Voice]:
     if not os.path.exists(path):
         # Return empty list if file not found to allow partial setup
         # Log warning in production
-        print(f"Warning: Voice config file not found at {path}")
+        import logging
+        logging.getLogger(__name__).warning(f"Voice config file not found at {path}")
         return []
         
     with open(path, 'r') as f:

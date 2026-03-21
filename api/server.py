@@ -70,12 +70,12 @@ async def lifespan(app: FastAPI):
     """Initialize and cleanup resources."""
     global orchestrator
     
-    print(f"🚀 Initializing Svara TTS API...")
-    print(f"   Model: {VLLM_MODEL}")
-    print(f"   SNAC Device: {SNAC_DEVICE or 'auto-detect'}")
-    print(f"   dtype: {VLLM_DTYPE}, quantization: {VLLM_QUANTIZATION}")
-    print(f"   max_model_len: {VLLM_MAX_MODEL_LEN}, enforce_eager: {VLLM_ENFORCE_EAGER}")
-    print(f"   HF_TOKEN: {'set' if os.getenv('HF_TOKEN') else 'not set'}")
+    logger.info("Initializing Svara TTS API...")
+    logger.info(f"  vLLM:  model={VLLM_MODEL}, dtype={VLLM_DTYPE}, quantization={VLLM_QUANTIZATION or 'none'}")
+    logger.info(f"  vLLM:  max_model_len={VLLM_MAX_MODEL_LEN}, gpu_mem={VLLM_GPU_MEMORY_UTILIZATION}, tp={VLLM_TENSOR_PARALLEL_SIZE}, enforce_eager={VLLM_ENFORCE_EAGER}")
+    logger.info(f"  SNAC:  device={SNAC_DEVICE or 'auto-detect'}, window_size={os.getenv('SNAC_WINDOW_SIZE', '28')}")
+    logger.info(f"  API:   host={os.getenv('API_HOST', '0.0.0.0')}, port={os.getenv('API_PORT', '8080')}, log_level={os.getenv('LOG_LEVEL', 'INFO')}")
+    logger.info(f"  Auth:  HF_TOKEN={'set' if os.getenv('HF_TOKEN') else 'not set'}")
 
     # Initialize embedded vLLM engine (singleton)
     VLLMEmbeddedTransport.initialize_engine(
@@ -87,7 +87,7 @@ async def lifespan(app: FastAPI):
         quantization=VLLM_QUANTIZATION,
         enforce_eager=VLLM_ENFORCE_EAGER,
     )
-    print(f"✓ vLLM engine initialized (embedded)")
+    logger.info("vLLM engine initialized (embedded)")
 
     transport = VLLMEmbeddedTransport(model=VLLM_MODEL)
 
@@ -101,12 +101,12 @@ async def lifespan(app: FastAPI):
         concurrent_decode=True,
     )
 
-    print(f"✓ Orchestrator initialized")
-    print(f"✓ Loaded {len(get_all_voices())} voices")
+    logger.info(f"Orchestrator initialized (workers={orchestrator.max_workers}, prebuffer={0.5}s, chunk_size={orchestrator.max_chunk_chars})")
+    logger.info(f"Loaded {len(get_all_voices())} voices")
     
     yield
     
-    print("🛑 Shutting down Svara TTS API...")
+    logger.info("Shutting down Svara TTS API...")
 
 
 # ============================================================================

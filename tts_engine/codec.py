@@ -1,6 +1,7 @@
 # tts_engine/codec.py
 from snac import SNAC
 from typing import List, Optional
+import logging
 import numpy as np
 import torch
 import os
@@ -8,6 +9,7 @@ from transformers import AutoTokenizer
 from .utils import resample_audio
 from .constants import AUDIO_TOKEN_OFFSETS
 
+logger = logging.getLogger(__name__)
 
 # Global model cache to avoid reloading SNAC model for each instance
 _SNAC_MODEL_CACHE: dict[str, SNAC] = {}
@@ -19,60 +21,36 @@ _TOKENIZER_CACHE: dict[str, AutoTokenizer] = {}
 def _get_or_load_snac_model(device: str, model_name: str = "hubertsiuzdak/snac_24khz") -> SNAC:
     """
     Get cached SNAC model or load it if not cached.
-    
+
     This prevents repeated model loading when creating multiple codec instances.
     Models are cached per device to handle multi-GPU scenarios.
-    
-    Args:
-        device: Device to load model on ('cuda', 'mps', 'cpu')
-        model_name: HuggingFace model identifier
-    
-    Returns:
-        Cached or newly loaded SNAC model
     """
     cache_key = f"{model_name}_{device}"
-    
+
     if cache_key not in _SNAC_MODEL_CACHE:
-        print(f"[DEBUG] Loading SNAC model: {model_name} on device: {device}")
+        logger.info(f"Loading SNAC model: {model_name} on device: {device}")
         model = SNAC.from_pretrained(model_name).eval().to(device)
-        print(f"[DEBUG] SNAC model loaded. Type: {type(model)}, Config: {model.config if hasattr(model, 'config') else 'N/A'}")
         _SNAC_MODEL_CACHE[cache_key] = model
-    else:
-        print(f"[DEBUG] Using cached SNAC model: {cache_key}")
-    
+
     return _SNAC_MODEL_CACHE[cache_key]
 
 
 def get_or_load_tokenizer(model_name: str) -> AutoTokenizer:
     """
     Get cached tokenizer or load it if not cached.
-    
-    This prevents repeated tokenizer loading when processing multiple requests.
+
     Automatically uses HF_TOKEN environment variable if available for private models.
-    
-    Args:
-        model_name: HuggingFace model identifier
-    
-    Returns:
-        Cached or newly loaded tokenizer
     """
     if model_name not in _TOKENIZER_CACHE:
-        print(f"[DEBUG] Loading tokenizer: {model_name}")
-        
-        # Check for HuggingFace token for private model access
+        logger.info(f"Loading tokenizer: {model_name}")
         hf_token = os.getenv("HF_TOKEN")
-        
         if hf_token:
-            print(f"[DEBUG] Using HF_TOKEN for authentication")
             tokenizer = AutoTokenizer.from_pretrained(model_name, token=hf_token)
         else:
             tokenizer = AutoTokenizer.from_pretrained(model_name)
-        
-        print(f"[DEBUG] Tokenizer loaded. Vocab size: {len(tokenizer)}")
+        logger.info(f"Tokenizer loaded (vocab_size={len(tokenizer)})")
         _TOKENIZER_CACHE[model_name] = tokenizer
-    else:
-        print(f"[DEBUG] Using cached tokenizer: {model_name}")
-    
+
     return _TOKENIZER_CACHE[model_name]
 
 
@@ -149,8 +127,7 @@ class SNACCodec:
         if input_sample_rate != self.sample_rate:            
             audio = resample_audio(audio, input_sample_rate, self.sample_rate, self.device)
         
-        # Debug: Check audio after resampling
-        print(f"[DEBUG] Audio shape after resample: {audio.shape}")
+        logger.debug(f"Audio shape after resample: {audio.shape}")
         
         # Ensure proper shape: SNAC expects (batch, channels, samples)
         if audio.dim() == 1:
@@ -163,13 +140,13 @@ class SNACCodec:
         # Move to device and ensure float32
         audio = audio.to(dtype=torch.float32, device=self.device)
         
-        print(f"[DEBUG] Audio shape going into SNAC encode: {audio.shape}")
+        logger.debug(f"Audio shape going into SNAC encode: {audio.shape}")
         
         # Encode with SNAC
         with torch.inference_mode():
             codes = self.model.encode(audio)
         
-        print(f"[DEBUG] SNAC codes shapes: codes[0]={codes[0].shape}, codes[1]={codes[1].shape}, codes[2]={codes[2].shape}")
+        logger.debug(f"SNAC codes shapes: {[c.shape for c in codes]}")
         
         # SNAC produces hierarchical codes with different temporal resolutions:
         # codes[0]: coarsest (e.g., 100 frames for 1 sec)
