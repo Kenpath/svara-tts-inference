@@ -114,6 +114,12 @@ class SvaraTTSOrchestrator:
                      f"snac_window_size={self.snac_window_size}, "
                      f"prebuffer={prebuffer_seconds}s")
 
+    def warmup(self):
+        """Run a dummy SNAC decode to trigger torch.compile and warm caches."""
+        logger.info("Warming up SNAC decoder...")
+        self.codec.decode_window([1] * self.snac_window_size)
+        logger.info("SNAC warmup complete")
+
     # ------------ SYNC path ------------
     def stream(self,
                text: str,
