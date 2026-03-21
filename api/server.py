@@ -107,6 +107,11 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"Orchestrator initialized (workers={orchestrator.max_workers}, prebuffer={0.5}s, chunk_size={orchestrator.max_chunk_chars})")
     logger.info(f"Loaded {len(get_all_voices())} voices")
+
+    # Warmup SNAC decoder (triggers torch.compile if enabled)
+    logger.info("Warming up SNAC decoder...")
+    orchestrator.codec.decode_window([1] * 28)
+    logger.info("SNAC warmup complete")
     
     yield
     
