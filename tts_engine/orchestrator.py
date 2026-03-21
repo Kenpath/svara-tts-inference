@@ -111,18 +111,22 @@ class SvaraTTSOrchestrator:
                audio_reference: Optional[List[int]] = None,
                reference_text: Optional[str] = None,
                speaker_id: Optional[str] = None,
+               chunk_size: Optional[int] = None,
+               buffer_ms: Optional[int] = None,
                **gen_kwargs) -> Iterator[bytes]:
         """Stream the TTS output, automatically chunking long texts.
 
-        For texts longer than max_chunk_chars, splits at sentence boundaries
+        For texts longer than chunk_size, splits at sentence boundaries
         and crossfades between chunks for smooth audio stitching.
         Streams audio progressively within each chunk — only holds back
         the last overlap_ms for crossfading with the next chunk.
         """
-        chunks = chunk_text(text, max_len=self.max_chunk_chars)
+        max_chars = chunk_size or self.max_chunk_chars
+        prebuf = int(self.codec.sample_rate * buffer_ms / 1000) if buffer_ms is not None else None
+        chunks = chunk_text(text, max_len=max_chars)
 
         if len(chunks) <= 1:
-            yield from self._stream_one(text, audio_reference=audio_reference, reference_text=reference_text, speaker_id=speaker_id, **gen_kwargs)
+            yield from self._stream_one(text, audio_reference=audio_reference, reference_text=reference_text, speaker_id=speaker_id, prebuffer_samples=prebuf, **gen_kwargs)
             return
 
         logger.info(f"Long text ({len(text)} chars) split into {len(chunks)} chunks")
@@ -133,7 +137,7 @@ class SvaraTTSOrchestrator:
             is_last_chunk = (chunk_text_str is chunks[-1])
             trailing = bytearray()
 
-            for b in self._stream_one(chunk_text_str, audio_reference=audio_reference, reference_text=reference_text, speaker_id=speaker_id, **gen_kwargs):
+            for b in self._stream_one(chunk_text_str, audio_reference=audio_reference, reference_text=reference_text, speaker_id=speaker_id, prebuffer_samples=prebuf, **gen_kwargs):
                 trailing.extend(b)
 
                 if prev_tail is not None:
@@ -175,6 +179,7 @@ class SvaraTTSOrchestrator:
                     audio_reference: Optional[List[int]] = None,
                     reference_text: Optional[str] = None,
                     speaker_id: Optional[str] = None,
+                    prebuffer_samples: Optional[int] = None,
                     **gen_kwargs) -> Iterator[bytes]:
 
         prompt = svara_text_to_tokens(
@@ -190,7 +195,7 @@ class SvaraTTSOrchestrator:
         logger.debug(f"Full prompt: {prompt}")
 
         mapper = SvaraMapper(window_size=self.snac_window_size)
-        audio_buf = AudioBuffer(self.prebuffer_samples)
+        audio_buf = AudioBuffer(prebuffer_samples if prebuffer_samples is not None else self.prebuffer_samples)
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) if self.concurrent_decode else None
         pending: List[concurrent.futures.Future] = []
 
@@ -233,18 +238,21 @@ class SvaraTTSOrchestrator:
                       audio_reference: Optional[List[int]] = None,
                       reference_text: Optional[str] = None,
                       speaker_id: Optional[str] = None,
+                      chunk_size: Optional[int] = None,
                       **gen_kwargs) -> AsyncIterator[bytes]:
         """Async stream the TTS output, automatically chunking long texts.
 
-        For texts longer than max_chunk_chars, splits at sentence boundaries
+        For texts longer than chunk_size, splits at sentence boundaries
         and crossfades between chunks for smooth audio stitching.
         Streams audio progressively within each chunk — only holds back
         the last overlap_ms for crossfading with the next chunk.
         """
-        chunks = chunk_text(text, max_len=self.max_chunk_chars)
+        max_chars = chunk_size or self.max_chunk_chars
+        prebuf = int(self.codec.sample_rate * buffer_ms / 1000) if buffer_ms is not None else None
+        chunks = chunk_text(text, max_len=max_chars)
 
         if len(chunks) <= 1:
-            async for b in self._astream_one(text, audio_reference=audio_reference, reference_text=reference_text, speaker_id=speaker_id, **gen_kwargs):
+            async for b in self._astream_one(text, audio_reference=audio_reference, reference_text=reference_text, speaker_id=speaker_id, prebuffer_samples=prebuf, **gen_kwargs):
                 yield b
             return
 
@@ -255,10 +263,9 @@ class SvaraTTSOrchestrator:
 
         for chunk_text_str in chunks:
             is_last_chunk = (chunk_text_str is chunks[-1])
-            # Accumulate a trailing buffer per chunk so we can hold back overlap_bytes
             trailing = bytearray()
 
-            async for b in self._astream_one(chunk_text_str, audio_reference=audio_reference, reference_text=reference_text, speaker_id=speaker_id, **gen_kwargs):
+            async for b in self._astream_one(chunk_text_str, audio_reference=audio_reference, reference_text=reference_text, speaker_id=speaker_id, prebuffer_samples=prebuf, **gen_kwargs):
                 trailing.extend(b)
 
                 # For the first piece of the first non-first chunk, crossfade with prev_tail
@@ -309,6 +316,7 @@ class SvaraTTSOrchestrator:
                            audio_reference: Optional[List[int]] = None,
                            reference_text: Optional[str] = None,
                            speaker_id: Optional[str] = None,
+                           prebuffer_samples: Optional[int] = None,
                            **gen_kwargs) -> AsyncIterator[bytes]:
 
         prompt = svara_text_to_tokens(
@@ -324,7 +332,7 @@ class SvaraTTSOrchestrator:
         logger.debug(f"Full prompt: {prompt}")
 
         mapper = SvaraMapper(window_size=self.snac_window_size)
-        audio_buf = AudioBuffer(self.prebuffer_samples)
+        audio_buf = AudioBuffer(prebuffer_samples if prebuffer_samples is not None else self.prebuffer_samples)
         loop = asyncio.get_running_loop()
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) if self.concurrent_decode else None
         pending: List[asyncio.Task] = []

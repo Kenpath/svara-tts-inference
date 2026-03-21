@@ -320,6 +320,8 @@ async def openai_speech(req: OpenAISpeechRequest):
         audio_reference=audio_tokens,
         reference_text=req.reference_transcript,
         speaker_id=speaker_id,
+        chunk_size=req.chunk_size,
+        buffer_ms=req.buffer_ms,
         **gen_kwargs,
     )
 

@@ -50,6 +50,8 @@ class OpenAISpeechRequest(BaseModel):
     top_k: Optional[int] = Field(None, ge=-1, description="Top-k sampling (default: 40)")
     repetition_penalty: Optional[float] = Field(None, ge=1.0, le=2.0, description="Repetition penalty (default: 1.1)")
     max_tokens: Optional[int] = Field(None, ge=1, le=4096, description="Maximum tokens to generate (default: 2048)")
+    chunk_size: Optional[int] = Field(None, ge=50, le=1000, description="Max characters per synthesis chunk for long texts (default: 200)")
+    buffer_ms: Optional[int] = Field(None, ge=0, le=5000, description="Audio prebuffer in milliseconds before streaming starts (default: 500)")
 
     @field_validator('reference_audio', mode='before')
     @classmethod
