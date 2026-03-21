@@ -17,22 +17,31 @@ from .utils import chunk_text
 logger = logging.getLogger(__name__)
 
 
-def _detect_gpu_tier() -> int:
+def _detect_max_workers(snac_device: Optional[str] = None) -> int:
     """
-    Detect GPU capability and return recommended max_workers.
+    Detect recommended max_workers for SNAC decoding.
 
-    High-end GPU (16GB+ VRAM, compute 8.0+): 4 workers
-    Standard GPU: 2 workers
-    CPU/MPS: 2 workers
+    When SNAC runs on CPU, scale with available CPU cores.
+    When SNAC runs on GPU, limit workers to avoid GPU contention.
     """
+    import os
+
+    # If SNAC is on CPU, use half the CPU cores (minimum 2)
+    device = snac_device or os.getenv("SNAC_DEVICE", "cpu")
+    if device == "cpu":
+        cpu_count = os.cpu_count() or 4
+        workers = max(2, cpu_count // 2)
+        logger.info(f"SNAC on CPU: {cpu_count} cores available, using {workers} workers")
+        return workers
+
+    # SNAC on GPU — keep workers limited to avoid contention
     if torch.cuda.is_available():
         try:
             props = torch.cuda.get_device_properties(0)
-            compute_cap = props.major
-            vram_gb = props.total_mem / (1024 ** 3)
+            vram_gb = props.total_memory / (1024 ** 3)
             logger.info(f"GPU detected: {props.name}, {vram_gb:.1f}GB VRAM, compute {props.major}.{props.minor}")
-            if vram_gb >= 16 and compute_cap >= 8:
-                return 4  # High-end (A100, H100, RTX 4090, etc.)
+            if vram_gb >= 16 and props.major >= 8:
+                return 4
         except Exception:
             pass
     return 2
@@ -84,8 +93,8 @@ class SvaraTTSOrchestrator:
         self.prebuffer_samples = int(self.codec.sample_rate * prebuffer_seconds)
         self.concurrent_decode = concurrent_decode
 
-        # Auto-detect optimal workers from GPU capability
-        self.max_workers = max_workers if max_workers is not None else _detect_gpu_tier()
+        # Auto-detect optimal workers based on SNAC device
+        self.max_workers = max_workers if max_workers is not None else _detect_max_workers(device)
 
         # SNAC window size: configurable via constructor or env var
         if snac_window_size is not None:
