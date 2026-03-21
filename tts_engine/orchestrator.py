@@ -248,6 +248,7 @@ class SvaraTTSOrchestrator:
                       reference_text: Optional[str] = None,
                       speaker_id: Optional[str] = None,
                       chunk_size: Optional[int] = None,
+                      buffer_ms: Optional[int] = None,
                       **gen_kwargs) -> AsyncIterator[bytes]:
         """Async stream the TTS output, automatically chunking long texts.
 
