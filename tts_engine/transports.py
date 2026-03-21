@@ -33,6 +33,7 @@ class VLLMEmbeddedTransport:
         quantization: Optional[str] = None,
         enforce_eager: bool = False,
         attention_backend: Optional[str] = None,
+        kv_cache_dtype: str = "auto",
     ):
         """Initialize the shared AsyncLLMEngine. Must be called once at startup."""
         if cls._engine is not None:
@@ -52,6 +53,7 @@ class VLLMEmbeddedTransport:
             quantization=quantization,
             enforce_eager=enforce_eager,
             attention_backend=attention_backend,
+            kv_cache_dtype=kv_cache_dtype,
         )
 
         cls._engine = AsyncLLMEngine.from_engine_args(engine_args)

@@ -29,6 +29,7 @@ services:
       - VLLM_QUANTIZATION=${VLLM_QUANTIZATION:-}
       - VLLM_ENFORCE_EAGER=${VLLM_ENFORCE_EAGER:-false}
       - VLLM_ATTENTION_BACKEND=${VLLM_ATTENTION_BACKEND:-}
+      - VLLM_KV_CACHE_DTYPE=${VLLM_KV_CACHE_DTYPE:-auto}
       - VLLM_DTYPE=${VLLM_DTYPE:-auto}
 
       # API Configuration
@@ -36,6 +37,7 @@ services:
       - API_HOST=${API_HOST:-0.0.0.0}
       - SNAC_DEVICE=${SNAC_DEVICE:-cpu}
       - SNAC_WINDOW_SIZE=${SNAC_WINDOW_SIZE:-28}
+      - SNAC_COMPILE=${SNAC_COMPILE:-true}
 
       # Logging
       - LOG_LEVEL=${LOG_LEVEL:-INFO}

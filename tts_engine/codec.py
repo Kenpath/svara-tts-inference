@@ -30,6 +30,12 @@ def _get_or_load_snac_model(device: str, model_name: str = "hubertsiuzdak/snac_2
     if cache_key not in _SNAC_MODEL_CACHE:
         logger.info(f"Loading SNAC model: {model_name} on device: {device}")
         model = SNAC.from_pretrained(model_name).eval().to(device)
+        if os.getenv("SNAC_COMPILE", "true").lower() in ("true", "1", "yes"):
+            try:
+                model = torch.compile(model)
+                logger.info("SNAC model compiled with torch.compile")
+            except Exception as e:
+                logger.warning(f"torch.compile failed for SNAC, using eager mode: {e}")
         _SNAC_MODEL_CACHE[cache_key] = model
 
     return _SNAC_MODEL_CACHE[cache_key]
