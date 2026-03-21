@@ -36,6 +36,9 @@ services:
       - SNAC_DEVICE=${SNAC_DEVICE:-cpu}
       - SNAC_WINDOW_SIZE=${SNAC_WINDOW_SIZE:-28}
 
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
       # Hugging Face Token (optional, for gated models)
       - HF_TOKEN=${HF_TOKEN:-}
 

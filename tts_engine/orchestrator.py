@@ -269,7 +269,6 @@ class SvaraTTSOrchestrator:
         logger.info(f"Long text ({len(text)} chars) split into {len(chunks)} chunks")
         overlap_bytes = int(self.codec.sample_rate * self.crossfade_ms / 1000) * 2  # 2 bytes per sample
         prev_tail: Optional[bytes] = None
-        is_first_chunk = True
 
         for chunk_text_str in chunks:
             is_last_chunk = (chunk_text_str is chunks[-1])
@@ -319,7 +318,6 @@ class SvaraTTSOrchestrator:
                 if trailing:
                     yield bytes(trailing)
 
-            is_first_chunk = False
 
     async def _astream_one(self,
                            text: str,

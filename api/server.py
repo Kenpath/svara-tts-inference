@@ -1,7 +1,7 @@
 """
 FastAPI server for Svara TTS API.
 
-Provides ElevenLabs-style text-to-speech endpoints with support for
+Provides OpenAI-compatible text-to-speech endpoints with support for
 Indian language voices and streaming audio generation.
 """
 from __future__ import annotations
@@ -18,6 +18,13 @@ try:
     load_dotenv()
 except ImportError:
     pass
+
+# Configure logging from LOG_LEVEL env var
+logging.basicConfig(
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
+    format="[%(asctime)s] %(levelname)s %(filename)s:%(lineno)d: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import StreamingResponse
@@ -41,7 +48,6 @@ from api.models import VoiceResponse, VoicesResponse, OpenAISpeechRequest
 # ============================================================================
 
 VLLM_MODEL = os.getenv("VLLM_MODEL", "kenpath/svara-tts-v1")
-TOKENIZER_MODEL = os.getenv("TOKENIZER_MODEL", VLLM_MODEL)  # Defaults to VLLM_MODEL
 SNAC_DEVICE = os.getenv("SNAC_DEVICE", None)  # None = auto-detect (CUDA/MPS/CPU). Device for SNAC audio decoder.
 VLLM_GPU_MEMORY_UTILIZATION = float(os.getenv("VLLM_GPU_MEMORY_UTILIZATION", "0.9"))
 VLLM_MAX_MODEL_LEN = int(os.getenv("VLLM_MAX_MODEL_LEN", "4096"))
@@ -66,8 +72,7 @@ async def lifespan(app: FastAPI):
     
     print(f"🚀 Initializing Svara TTS API...")
     print(f"   Model: {VLLM_MODEL}")
-    print(f"   Tokenizer Model: {TOKENIZER_MODEL}")
-    print(f"   Device: {SNAC_DEVICE or 'auto-detect'}")
+    print(f"   SNAC Device: {SNAC_DEVICE or 'auto-detect'}")
     print(f"   dtype: {VLLM_DTYPE}, quantization: {VLLM_QUANTIZATION}")
     print(f"   max_model_len: {VLLM_MAX_MODEL_LEN}, enforce_eager: {VLLM_ENFORCE_EAGER}")
     print(f"   HF_TOKEN: {'set' if os.getenv('HF_TOKEN') else 'not set'}")

@@ -1,6 +1,5 @@
 # Svara TTS API - Production Dockerfile
 # Multi-stage build for vLLM + SNAC + FastAPI deployment
-# CUDA 12.8 for NVIDIA Blackwell GPUs (RTX 5090)
 
 FROM nvidia/cuda:12.8.0-devel-ubuntu22.04 AS base
 

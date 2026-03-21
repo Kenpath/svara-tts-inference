@@ -187,8 +187,6 @@ svara-tts-inference/
 ├── assets/                 # Voice config YAML files
 ├── examples/               # Example scripts
 │   └── api_client.py       # API client examples
-├── scripts/                # Dev scripts
-│   └── start-dev.sh        # Dev startup (single process)
 ├── Dockerfile              # Docker image
 ├── docker-compose.yml      # Docker Compose config
 ├── supervisord.conf        # Process manager config
@@ -206,9 +204,6 @@ pip install -r requirements.txt
 cp .env.example .env
 
 # Start the server (vLLM engine starts embedded)
-./scripts/start-dev.sh
-
-# Or run directly
 cd api && python server.py
 ```
 
