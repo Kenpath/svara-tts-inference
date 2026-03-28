@@ -187,7 +187,6 @@ class OpenVINOTransport:
     def initialize_engine(
         cls,
         model: str,
-        tokenizer_model: str,
         device: str = "CPU",
         trust_remote_code: bool = True,
     ):
@@ -207,13 +206,13 @@ class OpenVINOTransport:
         model_path = cls._resolve_model_path(model)
         cls._pipeline = ov_genai.LLMPipeline(model_path, device)
         cls._tokenizer = AutoTokenizer.from_pretrained(
-            tokenizer_model,
+            model_path,
             trust_remote_code=trust_remote_code,
         )
         cls._resolved_model_path = model_path
         logger.info(
             "OpenVINO pipeline initialized: model=%s (resolved=%s), device=%s, tokenizer=%s",
-            model, model_path, device, tokenizer_model
+            model, model_path, device, model_path
         )
 
     def __init__(self, model: str):

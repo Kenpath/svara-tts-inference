@@ -60,7 +60,6 @@ VLLM_ATTENTION_BACKEND = os.getenv("VLLM_ATTENTION_BACKEND") or None
 VLLM_KV_CACHE_DTYPE = os.getenv("VLLM_KV_CACHE_DTYPE", "auto")
 OPENVINO_MODEL = os.getenv("OPENVINO_MODEL", "svara_ov")
 OPENVINO_DEVICE = os.getenv("OPENVINO_DEVICE", "CPU")
-TOKENIZER_MODEL = os.getenv("TOKENIZER_MODEL", VLLM_MODEL)
 # HF_TOKEN is checked in codec.get_or_load_tokenizer() for private models
 
 # Global instances (initialized in lifespan)
@@ -80,7 +79,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"  Backend: {TTS_BACKEND}")
     logger.info(f"  vLLM:    model={VLLM_MODEL}, dtype={VLLM_DTYPE}, quantization={VLLM_QUANTIZATION or 'none'}")
     logger.info(f"  vLLM:    max_model_len={VLLM_MAX_MODEL_LEN}, gpu_mem={VLLM_GPU_MEMORY_UTILIZATION}, tp={VLLM_TENSOR_PARALLEL_SIZE}, enforce_eager={VLLM_ENFORCE_EAGER}")
-    logger.info(f"  OpenVINO:model={OPENVINO_MODEL}, device={OPENVINO_DEVICE}, tokenizer={TOKENIZER_MODEL}")
+    logger.info(f"  OpenVINO:model={OPENVINO_MODEL}, device={OPENVINO_DEVICE}, tokenizer=from OPENVINO_MODEL")
     logger.info(f"  SNAC:  device={SNAC_DEVICE or 'auto-detect'}, window_size={os.getenv('SNAC_WINDOW_SIZE', '28')}")
     logger.info(f"  API:   host={os.getenv('API_HOST', '0.0.0.0')}, port={os.getenv('API_PORT', '8080')}, log_level={os.getenv('LOG_LEVEL', 'INFO')}")
     logger.info(f"  Auth:  HF_TOKEN={'set' if os.getenv('HF_TOKEN') else 'not set'}")
@@ -103,13 +102,12 @@ async def lifespan(app: FastAPI):
     elif TTS_BACKEND == "openvino":
         OpenVINOTransport.initialize_engine(
             model=OPENVINO_MODEL,
-            tokenizer_model=TOKENIZER_MODEL,
             device=OPENVINO_DEVICE,
             trust_remote_code=True,
         )
         logger.info("OpenVINO pipeline initialized (embedded)")
         transport = OpenVINOTransport(model=OPENVINO_MODEL)
-        selected_model = TOKENIZER_MODEL
+        selected_model = OPENVINO_MODEL
     else:
         raise RuntimeError(
             f"Invalid TTS_BACKEND='{TTS_BACKEND}'. Expected one of: vllm, openvino"
@@ -263,7 +261,7 @@ async def health_check():
     """Health check endpoint for container orchestration."""
     return {
         "status": "healthy",
-        "model": VLLM_MODEL if TTS_BACKEND == "vllm" else TOKENIZER_MODEL,
+        "model": VLLM_MODEL if TTS_BACKEND == "vllm" else OPENVINO_MODEL,
         "engine": f"embedded-{TTS_BACKEND}",
         "backend": TTS_BACKEND,
     }
