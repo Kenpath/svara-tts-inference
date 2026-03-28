@@ -3,6 +3,8 @@ import asyncio
 import uuid
 import threading
 import logging
+import os
+from pathlib import Path
 from typing import Iterator, AsyncIterator, Optional
 
 from .constants import END_OF_SPEECH, TOKENISER_LENGTH, AUDIO_TOKENS_START
@@ -148,6 +150,38 @@ class OpenVINOTransport:
 
     _pipeline = None
     _tokenizer = None
+    _resolved_model_path = None
+
+    @classmethod
+    def _resolve_model_path(cls, model: str) -> str:
+        """
+        Resolve OpenVINO model input to a local directory path.
+
+        Accepts:
+        - Local directory path containing OpenVINO IR artifacts
+        - Hugging Face repo ID (downloads snapshot to cache)
+        """
+        p = Path(model)
+        if p.exists() and p.is_dir():
+            return str(p.resolve())
+
+        # Treat as Hugging Face repo id when local directory is not found.
+        try:
+            from huggingface_hub import snapshot_download
+        except ImportError as e:
+            raise RuntimeError(
+                "OPENVINO_MODEL looks like a Hugging Face repo ID, but "
+                "huggingface_hub is not installed."
+            ) from e
+
+        hf_token = os.getenv("HF_TOKEN") or None
+        logger.info("Downloading OpenVINO model snapshot from Hugging Face: %s", model)
+        local_dir = snapshot_download(
+            repo_id=model,
+            token=hf_token,
+            local_dir_use_symlinks=False,
+        )
+        return str(Path(local_dir).resolve())
 
     @classmethod
     def initialize_engine(
@@ -170,14 +204,16 @@ class OpenVINOTransport:
                 "Install with: pip install -r requirements-openvino.txt"
             ) from e
 
-        cls._pipeline = ov_genai.LLMPipeline(model, device)
+        model_path = cls._resolve_model_path(model)
+        cls._pipeline = ov_genai.LLMPipeline(model_path, device)
         cls._tokenizer = AutoTokenizer.from_pretrained(
             tokenizer_model,
             trust_remote_code=trust_remote_code,
         )
+        cls._resolved_model_path = model_path
         logger.info(
-            "OpenVINO pipeline initialized: model=%s, device=%s, tokenizer=%s",
-            model, device, tokenizer_model
+            "OpenVINO pipeline initialized: model=%s (resolved=%s), device=%s, tokenizer=%s",
+            model, model_path, device, tokenizer_model
         )
 
     def __init__(self, model: str):
