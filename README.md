@@ -13,6 +13,7 @@ Inference and deployment toolkit for Svara-TTS, an open-source multilingual text
 - **OpenAI-Compatible API**: Drop-in replacement for OpenAI's `/v1/audio/speech` endpoint
 - **Production Ready**: Docker deployment with embedded vLLM engine
 - **GPU Accelerated**: CUDA-optimized inference with configurable SNAC decoder device
+- **Backend Choice**: Run with embedded `vllm` or `openvino` backend
 - **Multiple Audio Formats**: Output in MP3, Opus, AAC, WAV, or raw PCM via ffmpeg
 - **Zero-Shot Voice Cloning**: Clone any voice with a short audio reference
 - **Long-Text Chunking**: Automatic sentence-boundary splitting with crossfade stitching
@@ -190,24 +191,59 @@ svara-tts-inference/
 ├── Dockerfile              # Docker image
 ├── docker-compose.yml      # Docker Compose config
 ├── supervisord.conf        # Process manager config
-├── requirements.txt        # Python dependencies
+├── requirements.txt        # Default dependencies (vLLM stack)
+├── requirements-vllm.txt   # vLLM-specific dependencies
+├── requirements-openvino.txt # OpenVINO-specific dependencies
 └── .env.example            # Environment variable template
 ```
 
 ### Local Development
 
 ```bash
-# Install dependencies
+# Install default dependencies (vLLM)
 pip install -r requirements.txt
+```
 
+```bash
+# Install OpenVINO dependencies (no vLLM)
+pip install -r requirements-openvino.txt
+```
+
+```bash
 # Configure environment (optional)
 cp .env.example .env
 
-# Start the server (vLLM engine starts embedded)
-cd api && python server.py
+cd api
+TTS_BACKEND=vllm python server.py
+TTS_BACKEND=openvino OPENVINO_MODEL=../svara_ov python server.py
+TTS_BACKEND=openvino OPENVINO_MODEL=kenpath/svara-v1-openvino python server.py
 ```
 
-The vLLM engine initializes in-process during FastAPI startup — no separate vLLM server needed.
+The backend is selected by `TTS_BACKEND`:
+- `vllm` uses embedded AsyncLLMEngine
+- `openvino` uses embedded OpenVINO GenAI pipeline
+
+The API request schema is the same for both backends (`temperature`, `top_p`,
+`top_k`, `repetition_penalty`, `max_tokens`, streaming/non-streaming, etc.).
+
+```bash
+# Check selected backend
+curl http://localhost:8080/health
+```
+
+The response includes `backend` and `engine` fields.
+
+```bash
+# Example:
+# {"status":"healthy","model":"kenpath/svara-tts-v1","engine":"embedded-openvino","backend":"openvino"}
+```
+
+The vLLM engine initializes in-process during FastAPI startup when `TTS_BACKEND=vllm` — no separate vLLM server needed.
+
+For OpenVINO workflows, install `requirements-openvino.txt` and set
+`OPENVINO_MODEL` to either:
+- a local exported OpenVINO model directory, or
+- a Hugging Face repo ID that contains OpenVINO files.
 
 ## Requirements
 
