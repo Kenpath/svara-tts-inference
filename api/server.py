@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tts_engine.voice_config import get_all_voices, get_speaker_id
 from tts_engine.orchestrator import SvaraTTSOrchestrator
-from tts_engine.transports import VLLMEmbeddedTransport
+from tts_engine.transports import VLLMEmbeddedTransport, OpenVINOTransport
 from tts_engine.utils import load_audio_from_bytes
 from tts_engine.codec import SNACCodec
 from api.models import VoiceResponse, VoicesResponse, OpenAISpeechRequest
@@ -48,6 +48,7 @@ from api.models import VoiceResponse, VoicesResponse, OpenAISpeechRequest
 # ============================================================================
 
 VLLM_MODEL = os.getenv("VLLM_MODEL", "kenpath/svara-tts-v1")
+TTS_BACKEND = os.getenv("TTS_BACKEND", "vllm").lower()
 SNAC_DEVICE = os.getenv("SNAC_DEVICE", None)  # None = auto-detect (CUDA/MPS/CPU). Device for SNAC audio decoder.
 VLLM_GPU_MEMORY_UTILIZATION = float(os.getenv("VLLM_GPU_MEMORY_UTILIZATION", "0.9"))
 VLLM_MAX_MODEL_LEN = int(os.getenv("VLLM_MAX_MODEL_LEN", "4096"))
@@ -57,6 +58,9 @@ VLLM_ENFORCE_EAGER = os.getenv("VLLM_ENFORCE_EAGER", "false").lower() in ("true"
 VLLM_DTYPE = os.getenv("VLLM_DTYPE", "auto")
 VLLM_ATTENTION_BACKEND = os.getenv("VLLM_ATTENTION_BACKEND") or None
 VLLM_KV_CACHE_DTYPE = os.getenv("VLLM_KV_CACHE_DTYPE", "auto")
+OPENVINO_MODEL = os.getenv("OPENVINO_MODEL", "svara_ov")
+OPENVINO_DEVICE = os.getenv("OPENVINO_DEVICE", "CPU")
+TOKENIZER_MODEL = os.getenv("TOKENIZER_MODEL", VLLM_MODEL)
 # HF_TOKEN is checked in codec.get_or_load_tokenizer() for private models
 
 # Global instances (initialized in lifespan)
@@ -73,32 +77,48 @@ async def lifespan(app: FastAPI):
     global orchestrator
     
     logger.info("Initializing Svara TTS API...")
-    logger.info(f"  vLLM:  model={VLLM_MODEL}, dtype={VLLM_DTYPE}, quantization={VLLM_QUANTIZATION or 'none'}")
-    logger.info(f"  vLLM:  max_model_len={VLLM_MAX_MODEL_LEN}, gpu_mem={VLLM_GPU_MEMORY_UTILIZATION}, tp={VLLM_TENSOR_PARALLEL_SIZE}, enforce_eager={VLLM_ENFORCE_EAGER}")
+    logger.info(f"  Backend: {TTS_BACKEND}")
+    logger.info(f"  vLLM:    model={VLLM_MODEL}, dtype={VLLM_DTYPE}, quantization={VLLM_QUANTIZATION or 'none'}")
+    logger.info(f"  vLLM:    max_model_len={VLLM_MAX_MODEL_LEN}, gpu_mem={VLLM_GPU_MEMORY_UTILIZATION}, tp={VLLM_TENSOR_PARALLEL_SIZE}, enforce_eager={VLLM_ENFORCE_EAGER}")
+    logger.info(f"  OpenVINO:model={OPENVINO_MODEL}, device={OPENVINO_DEVICE}, tokenizer={TOKENIZER_MODEL}")
     logger.info(f"  SNAC:  device={SNAC_DEVICE or 'auto-detect'}, window_size={os.getenv('SNAC_WINDOW_SIZE', '28')}")
     logger.info(f"  API:   host={os.getenv('API_HOST', '0.0.0.0')}, port={os.getenv('API_PORT', '8080')}, log_level={os.getenv('LOG_LEVEL', 'INFO')}")
     logger.info(f"  Auth:  HF_TOKEN={'set' if os.getenv('HF_TOKEN') else 'not set'}")
 
-    # Initialize embedded vLLM engine (singleton)
-    VLLMEmbeddedTransport.initialize_engine(
-        model=VLLM_MODEL,
-        gpu_memory_utilization=VLLM_GPU_MEMORY_UTILIZATION,
-        max_model_len=VLLM_MAX_MODEL_LEN,
-        tensor_parallel_size=VLLM_TENSOR_PARALLEL_SIZE,
-        dtype=VLLM_DTYPE,
-        quantization=VLLM_QUANTIZATION,
-        enforce_eager=VLLM_ENFORCE_EAGER,
-        attention_backend=VLLM_ATTENTION_BACKEND,
-        kv_cache_dtype=VLLM_KV_CACHE_DTYPE,
-    )
-    logger.info("vLLM engine initialized (embedded)")
-
-    transport = VLLMEmbeddedTransport(model=VLLM_MODEL)
+    if TTS_BACKEND == "vllm":
+        VLLMEmbeddedTransport.initialize_engine(
+            model=VLLM_MODEL,
+            gpu_memory_utilization=VLLM_GPU_MEMORY_UTILIZATION,
+            max_model_len=VLLM_MAX_MODEL_LEN,
+            tensor_parallel_size=VLLM_TENSOR_PARALLEL_SIZE,
+            dtype=VLLM_DTYPE,
+            quantization=VLLM_QUANTIZATION,
+            enforce_eager=VLLM_ENFORCE_EAGER,
+            attention_backend=VLLM_ATTENTION_BACKEND,
+            kv_cache_dtype=VLLM_KV_CACHE_DTYPE,
+        )
+        logger.info("vLLM engine initialized (embedded)")
+        transport = VLLMEmbeddedTransport(model=VLLM_MODEL)
+        selected_model = VLLM_MODEL
+    elif TTS_BACKEND == "openvino":
+        OpenVINOTransport.initialize_engine(
+            model=OPENVINO_MODEL,
+            tokenizer_model=TOKENIZER_MODEL,
+            device=OPENVINO_DEVICE,
+            trust_remote_code=True,
+        )
+        logger.info("OpenVINO pipeline initialized (embedded)")
+        transport = OpenVINOTransport(model=OPENVINO_MODEL)
+        selected_model = TOKENIZER_MODEL
+    else:
+        raise RuntimeError(
+            f"Invalid TTS_BACKEND='{TTS_BACKEND}'. Expected one of: vllm, openvino"
+        )
 
     # Initialize orchestrator with default settings
     orchestrator = SvaraTTSOrchestrator(
         transport=transport,
-        model=VLLM_MODEL,
+        model=selected_model,
         speaker_id="English (Male)",  # Default, will be overridden per request
         device=SNAC_DEVICE,
         prebuffer_seconds=0.5,
@@ -243,8 +263,9 @@ async def health_check():
     """Health check endpoint for container orchestration."""
     return {
         "status": "healthy",
-        "model": VLLM_MODEL,
-        "engine": "embedded",
+        "model": VLLM_MODEL if TTS_BACKEND == "vllm" else TOKENIZER_MODEL,
+        "engine": f"embedded-{TTS_BACKEND}",
+        "backend": TTS_BACKEND,
     }
 
 

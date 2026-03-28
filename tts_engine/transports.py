@@ -1,12 +1,11 @@
 from __future__ import annotations
-import os
 import asyncio
 import uuid
 import threading
 import logging
-from typing import Iterator, AsyncIterator, Optional, Dict, Any
+from typing import Iterator, AsyncIterator, Optional
 
-from .constants import END_OF_SPEECH
+from .constants import END_OF_SPEECH, TOKENISER_LENGTH, AUDIO_TOKENS_START
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +113,168 @@ class VLLMEmbeddedTransport:
 
         # Run in a new event loop on a separate thread to avoid
         # blocking or conflicting with the main async loop
+        results = []
+        exception = None
+
+        def _run():
+            nonlocal results, exception
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    results = loop.run_until_complete(_collect())
+                finally:
+                    loop.close()
+            except Exception as e:
+                exception = e
+
+        thread = threading.Thread(target=_run)
+        thread.start()
+        thread.join()
+
+        if exception is not None:
+            raise exception
+
+        yield from results
+
+
+class OpenVINOTransport:
+    """
+    In-process OpenVINO transport using openvino-genai LLMPipeline.
+
+    This transport emits `<custom_token_N>` strings so the existing Svara mapper
+    pipeline can decode audio without changing orchestrator internals.
+    """
+
+    _pipeline = None
+    _tokenizer = None
+
+    @classmethod
+    def initialize_engine(
+        cls,
+        model: str,
+        tokenizer_model: str,
+        device: str = "CPU",
+        trust_remote_code: bool = True,
+    ):
+        if cls._pipeline is not None and cls._tokenizer is not None:
+            logger.warning("OpenVINO pipeline already initialized, skipping re-initialization")
+            return
+
+        try:
+            import openvino_genai as ov_genai
+            from transformers import AutoTokenizer
+        except ImportError as e:
+            raise RuntimeError(
+                "OpenVINO backend selected, but dependencies are missing. "
+                "Install with: pip install -r requirements-openvino.txt"
+            ) from e
+
+        cls._pipeline = ov_genai.LLMPipeline(model, device)
+        cls._tokenizer = AutoTokenizer.from_pretrained(
+            tokenizer_model,
+            trust_remote_code=trust_remote_code,
+        )
+        logger.info(
+            "OpenVINO pipeline initialized: model=%s, device=%s, tokenizer=%s",
+            model, device, tokenizer_model
+        )
+
+    def __init__(self, model: str):
+        self.model = model
+
+    @property
+    def pipeline(self):
+        if self._pipeline is None:
+            raise RuntimeError("OpenVINOTransport.initialize_engine() must be called before use")
+        return self._pipeline
+
+    @property
+    def tokenizer(self):
+        if self._tokenizer is None:
+            raise RuntimeError("OpenVINOTransport.initialize_engine() must be called before use")
+        return self._tokenizer
+
+    async def astream(self, prompt: str, **gen_kwargs) -> AsyncIterator[str]:
+        """
+        Generate token ids with OpenVINO and convert audio token ids into
+        `<custom_token_N>` text chunks consumed by the mapper.
+
+        Note: this is currently pseudo-streaming (generate-then-yield).
+        """
+
+        max_new_tokens = gen_kwargs.get("max_tokens", 2048)
+        temperature = gen_kwargs.get("temperature", 0.75)
+        top_p = gen_kwargs.get("top_p", 0.9)
+        top_k = gen_kwargs.get("top_k", 40)
+        repetition_penalty = gen_kwargs.get("repetition_penalty", 1.1)
+
+        def _generate():
+            from openvino import Tensor
+
+            input_ids = self.tokenizer.encode(prompt, add_special_tokens=False)
+            input_tensor = Tensor([input_ids])
+            generate_kwargs = {
+                "inputs": input_tensor,
+                "max_new_tokens": max_new_tokens,
+                "do_sample": temperature > 0,
+                "temperature": temperature,
+                "top_p": top_p,
+                "top_k": top_k,
+                "repetition_penalty": repetition_penalty,
+            }
+            unsupported: list[str] = []
+            result = None
+
+            # Keep the same API knobs as vLLM; if local OpenVINO version does
+            # not support one of them, drop it and continue.
+            while True:
+                try:
+                    result = self.pipeline.generate(**generate_kwargs)
+                    break
+                except TypeError as e:
+                    msg = str(e)
+                    dropped = False
+                    for key in list(generate_kwargs.keys()):
+                        if key in ("inputs", "max_new_tokens", "do_sample"):
+                            continue
+                        if key in msg:
+                            unsupported.append(key)
+                            generate_kwargs.pop(key, None)
+                            dropped = True
+                            break
+                    if not dropped:
+                        raise
+                except Exception:
+                    raise
+            if unsupported:
+                logger.warning(
+                    "OpenVINO runtime does not support generation args: %s",
+                    ", ".join(sorted(set(unsupported))),
+                )
+            return result
+
+        generated = await asyncio.to_thread(_generate)
+        tokens = generated.tokens[0] if hasattr(generated, "tokens") else []
+
+        for token_id in tokens:
+            if token_id == END_OF_SPEECH:
+                break
+            if token_id >= AUDIO_TOKENS_START:
+                # Convert vocab token id (e.g. 128266) to custom token index (10).
+                custom_idx = token_id - TOKENISER_LENGTH
+                if custom_idx > 0:
+                    yield f"<custom_token_{custom_idx}>"
+
+    def stream(self, prompt: str, **gen_kwargs) -> Iterator[str]:
+        """Sync wrapper around astream() for the sync orchestrator path."""
+
+        async def _collect():
+            results = []
+            async for delta in self.astream(prompt, **gen_kwargs):
+                results.append(delta)
+            return results
+
         results = []
         exception = None
 

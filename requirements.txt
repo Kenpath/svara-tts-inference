@@ -1,15 +1,1 @@
-langcodes
-language_data
-snac
-torch
-torchaudio
-transformers>=4.30.0
-vllm>=0.17.0
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
-pydantic>=2.0.0
-python-dotenv
-flashinfer-python>=0.2.3
-hf-transfer  # Optional: faster HuggingFace downloads
-pyyaml
-torchcodec
+-r requirements-vllm.txt

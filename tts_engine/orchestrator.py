@@ -1,12 +1,11 @@
 
 from __future__ import annotations
 import os
-from typing import Iterator, AsyncIterator, List, Optional, Literal, Union
+from typing import Iterator, AsyncIterator, List, Optional, Literal, Union, Protocol
 import concurrent.futures
 import asyncio
 import logging
 import torch
-from .transports import VLLMEmbeddedTransport
 from .mapper import SvaraMapper, extract_custom_token_numbers
 from .codec import SNACCodec, get_or_load_tokenizer
 from .encoder import svara_text_to_tokens
@@ -15,6 +14,14 @@ from .buffers import AudioBuffer, SyncFuture, crossfade_pcm
 from .utils import chunk_text
 
 logger = logging.getLogger(__name__)
+
+
+class InferenceTransport(Protocol):
+    def stream(self, prompt: str, **gen_kwargs) -> Iterator[str]:
+        ...
+
+    async def astream(self, prompt: str, **gen_kwargs) -> AsyncIterator[str]:
+        ...
 
 
 def _detect_max_workers(snac_device: Optional[str] = None) -> int:
@@ -53,7 +60,7 @@ class SvaraTTSOrchestrator:
     transport -> mapper -> decoder -> PCM int16 chunks.
 
     Args:
-        transport: The VLLMEmbeddedTransport instance.
+        transport: Transport implementing stream/astream token generation.
         model: The model name (for tokenizer lookup).
         speaker_id: The speaker identifier (e.g., "Hindi (Male)", "English (Female)").
                     If not provided, will be constructed from lang_code and gender.
@@ -68,7 +75,7 @@ class SvaraTTSOrchestrator:
         device: Device for SNAC decoder (cuda, mps, cpu, or None for auto).
     """
     def __init__(self,
-                 transport: VLLMEmbeddedTransport,
+                 transport: InferenceTransport,
                  model: str = "kenpath/svara-tts-v1",
                  speaker_id: Optional[str] = None,
                  lang_code: str = "en",
