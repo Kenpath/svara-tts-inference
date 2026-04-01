@@ -5,7 +5,7 @@ import threading
 import logging
 import os
 from pathlib import Path
-from typing import Iterator, AsyncIterator, Optional
+from typing import Iterator, AsyncIterator, Optional, Any
 
 from .constants import END_OF_SPEECH, TOKENISER_LENGTH, AUDIO_TOKENS_START
 
@@ -234,8 +234,6 @@ class OpenVINOTransport:
         """
         Generate token ids with OpenVINO and convert audio token ids into
         `<custom_token_N>` text chunks consumed by the mapper.
-
-        Note: this is currently pseudo-streaming (generate-then-yield).
         """
 
         max_new_tokens = gen_kwargs.get("max_tokens", 2048)
@@ -243,63 +241,96 @@ class OpenVINOTransport:
         top_p = gen_kwargs.get("top_p", 0.9)
         top_k = gen_kwargs.get("top_k", 40)
         repetition_penalty = gen_kwargs.get("repetition_penalty", 1.1)
+        loop = asyncio.get_running_loop()
+        q: asyncio.Queue[Any] = asyncio.Queue()
+        sentinel = object()
+        worker_error: dict[str, BaseException] = {}
 
-        def _generate():
-            from openvino import Tensor
+        def put_threadsafe(item: Any):
+            loop.call_soon_threadsafe(q.put_nowait, item)
 
-            input_ids = self.tokenizer.encode(prompt, add_special_tokens=False)
-            input_tensor = Tensor([input_ids])
-            generate_kwargs = {
-                "inputs": input_tensor,
-                "max_new_tokens": max_new_tokens,
-                "do_sample": temperature > 0,
-                "temperature": temperature,
-                "top_p": top_p,
-                "top_k": top_k,
-                "repetition_penalty": repetition_penalty,
-            }
-            unsupported: list[str] = []
-            result = None
+        def _generate_streaming():
+            try:
+                import openvino_genai as ov_genai
+                from openvino import Tensor
 
-            # Keep the same API knobs as vLLM; if local OpenVINO version does
-            # not support one of them, drop it and continue.
-            while True:
-                try:
-                    result = self.pipeline.generate(**generate_kwargs)
-                    break
-                except TypeError as e:
-                    msg = str(e)
-                    dropped = False
-                    for key in list(generate_kwargs.keys()):
-                        if key in ("inputs", "max_new_tokens", "do_sample"):
-                            continue
-                        if key in msg:
-                            unsupported.append(key)
-                            generate_kwargs.pop(key, None)
-                            dropped = True
-                            break
-                    if not dropped:
-                        raise
-                except Exception:
-                    raise
-            if unsupported:
-                logger.warning(
-                    "OpenVINO runtime does not support generation args: %s",
-                    ", ".join(sorted(set(unsupported))),
-                )
-            return result
+                class _TokenStreamer(ov_genai.StreamerBase):
+                    def __init__(self):
+                        super().__init__()
 
-        generated = await asyncio.to_thread(_generate)
-        tokens = generated.tokens[0] if hasattr(generated, "tokens") else []
+                    def write(self, token_id) -> "ov_genai.StreamingStatus":
+                        tokens_list = list(token_id) if isinstance(token_id, (list, tuple)) else [int(token_id)]
+                        for t in tokens_list:
+                            if t == END_OF_SPEECH:
+                                return ov_genai.StreamingStatus.STOP
+                            if t >= AUDIO_TOKENS_START:
+                                # Convert vocab token id (e.g. 128266) to custom token index (10).
+                                custom_idx = t - TOKENISER_LENGTH
+                                if custom_idx > 0:
+                                    put_threadsafe(f"<custom_token_{custom_idx}>")
+                        return ov_genai.StreamingStatus.RUNNING
 
-        for token_id in tokens:
-            if token_id == END_OF_SPEECH:
+                    def end(self):
+                        # No-op: sentinel is pushed by worker finally block.
+                        return None
+
+                input_ids = self.tokenizer.encode(prompt, add_special_tokens=False)
+                input_tensor = Tensor([input_ids])
+                streamer = _TokenStreamer()
+                generate_kwargs = {
+                    "inputs": input_tensor,
+                    "max_new_tokens": max_new_tokens,
+                    "do_sample": temperature > 0,
+                    "temperature": temperature,
+                    "top_p": top_p,
+                    "top_k": top_k,
+                    "repetition_penalty": repetition_penalty,
+                    "streamer": streamer,
+                }
+                unsupported: list[str] = []
+
+                # Keep the same API knobs as vLLM; if local OpenVINO version does
+                # not support one of them, drop it and continue.
+                while True:
+                    try:
+                        self.pipeline.generate(**generate_kwargs)
+                        break
+                    except TypeError as e:
+                        msg = str(e)
+                        dropped = False
+                        for key in list(generate_kwargs.keys()):
+                            if key in ("inputs", "max_new_tokens", "do_sample", "streamer"):
+                                continue
+                            if key in msg:
+                                unsupported.append(key)
+                                generate_kwargs.pop(key, None)
+                                dropped = True
+                                break
+                        if not dropped:
+                            raise
+                if unsupported:
+                    logger.warning(
+                        "OpenVINO runtime does not support generation args: %s",
+                        ", ".join(sorted(set(unsupported))),
+                    )
+            except BaseException as e:
+                worker_error["error"] = e
+            finally:
+                put_threadsafe(sentinel)
+
+        worker = threading.Thread(target=_generate_streaming, daemon=True)
+        worker.start()
+
+        while True:
+            item = await q.get()
+            if item is sentinel:
                 break
-            if token_id >= AUDIO_TOKENS_START:
-                # Convert vocab token id (e.g. 128266) to custom token index (10).
-                custom_idx = token_id - TOKENISER_LENGTH
-                if custom_idx > 0:
-                    yield f"<custom_token_{custom_idx}>"
+            yield item
+
+        await asyncio.to_thread(worker.join)
+
+        if "error" in worker_error:
+            raise worker_error["error"]
 
     def stream(self, prompt: str, **gen_kwargs) -> Iterator[str]:
         """Sync wrapper around astream() for the sync orchestrator path."""
